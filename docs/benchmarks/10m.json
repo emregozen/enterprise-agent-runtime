@@ -1,0 +1,88 @@
+{
+  "rows": 10000000,
+  "table_bytes": 1156964352,
+  "loader_hwm_mb": null,
+  "pushdown_full_table": {
+    "wall_seconds": 0.736,
+    "execution_ms": 735.314,
+    "planning_ms": 0.209,
+    "plan_node": "Aggregate",
+    "shared_hit": 654,
+    "shared_read": 104922
+  },
+  "pushdown_daily_window": {
+    "wall_seconds": 0.003,
+    "execution_ms": 0.187,
+    "planning_ms": 2.204,
+    "plan_node": "Aggregate",
+    "shared_hit": 13,
+    "shared_read": 1
+  },
+  "chunk_tuning_300k": [
+    {
+      "batch_rows": 2000,
+      "limit": 300000,
+      "row_count": 300000,
+      "seconds": 0.478,
+      "parquet_bytes": 3647912,
+      "fetcher_hwm_mb": 99.6,
+      "rows_per_second": 628182.2
+    },
+    {
+      "batch_rows": 10000,
+      "limit": 300000,
+      "row_count": 300000,
+      "seconds": 0.43,
+      "parquet_bytes": 3645197,
+      "fetcher_hwm_mb": 112.3,
+      "rows_per_second": 697583.1
+    },
+    {
+      "batch_rows": 50000,
+      "limit": 300000,
+      "row_count": 300000,
+      "seconds": 0.496,
+      "parquet_bytes": 3271590,
+      "fetcher_hwm_mb": 165.2,
+      "rows_per_second": 605092.2
+    }
+  ],
+  "chosen_batch_rows": 10000,
+  "parquet_10m": {
+    "batch_rows": 10000,
+    "limit": 10000000,
+    "row_count": 10000000,
+    "seconds": 13.916,
+    "parquet_bytes": 121507719,
+    "fetcher_hwm_mb": 114.2,
+    "rows_per_second": 718573.1
+  },
+  "duckdb_executor": {
+    "seconds": 0.243,
+    "ok": true,
+    "error": null,
+    "stderr": "",
+    "executor_hwm_mb": 80.5
+  },
+  "cross_check": {
+    "sql_total": 10957051534.42,
+    "duckdb_total": 10957051534.419983,
+    "sql_count": 10000000,
+    "duckdb_count": 10000000,
+    "match": true
+  },
+  "seeded_agent": {
+    "run_id": "31f659d4-b0b5-41fc-a96a-e1d57d9f8e1b",
+    "status": "succeeded",
+    "wall_seconds": 0.759,
+    "grand_total": 10160.0,
+    "anomaly_regions": [
+      "Doğu Anadolu"
+    ],
+    "needs_review_reason": null,
+    "error": null,
+    "sql_rows": 56,
+    "executor_tree_hwm_mb": 106.7,
+    "verification": "passed"
+  }
+}

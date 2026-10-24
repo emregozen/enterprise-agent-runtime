@@ -128,7 +128,7 @@ docker compose --profile s3 up        # SeaweedFS, S3 API makinede 8833
 
 Oracle DSN örneği: `oracle://system:oracle@127.0.0.1:1521/FREEPDB1`. Kaynak `dialect: oracle` ile kaydedilir. Oracle sürücüsü ince moddadır; anlık istemci gerekmez. Bu imaj burada çekilmedi.
 
-SeaweedFS için kontrol düzleminde `ARTIFACT_BACKEND=s3` ve `S3_ENDPOINT_URL=http://seaweedfs:8333`.
+SeaweedFS için kontrol düzleminde `ARTIFACT_BACKEND=s3` ve `S3_ENDPOINT_URL=http://seaweedfs:8333`. Docker olmadan aynı yol, Apache-2.0 SeaweedFS 3.80 ikili dosyasıyla `127.0.0.1:8833` üzerinde denendi. Anahtar `agentrt` / `agentrt-secret`. `tests/test_s3_artifacts.py` nesneyi yazıp geri okur ve kontrol düzleminin artefakt kaydının `s3://` adresine düştüğünü görür. Sunucu yoksa test atlanır.
 
 ## Örnek satış verisi
 
@@ -142,6 +142,18 @@ Yapısal çekirdek, her bölge için dün ve önceki yedi günü doldurur. Doğu
 
 On milyon satır aynı komutla `--rows 10000000`. Yükleme `COPY` kullanır. Koşum kullanıcısı `sales_ro` olur ve `default_transaction_read_only` alır. Kontrol düzlemi `SALES_DATABASE_URL` ile bu kullanıcıyı görür. Yönetici adresi `SALES_ADMIN_URL` yalnızca yükleme içindir ve Job’a konmaz.
 
+Bu makinede 10 milyon satır 42 saniyede yüklendi. Tablo yaklaşık 1,1 GB. Ayrıntılı süreler `docs/benchmarks/10m.md` dosyasındadır. Özet:
+
+| Yol | Sonuç |
+| --- | --- |
+| Tam tablo `SUM` / `GROUP BY` | 735 ms, plan düğümü Aggregate |
+| Günlük pencere (indeks) | 0,2 ms, 56 satır |
+| 10 milyon satırın Parquet’e alınması | 13,9 s, 116 MB dosya, okuyucu tepe belleği 114 MB, parti boyu 10 000 |
+| Executor içinde DuckDB | 0,24 s, tepe bellek 81 MB, SQL toplamıyla uyumlu (10 000 000 satır) |
+| Seed `gunluk-satis-ozeti` | 0,76 s, durum succeeded, toplam 10.160,00, tek sapma Doğu Anadolu, executor tepe belleği 107 MB |
+
+300 bin satırda 2 000, 10 000 ve 50 000’lik partiler denendi. 10 000 en hızlısıydı ve 50 000’den daha az bellek kullandı. Varsayılan `ARROW_BATCH_ROWS` bu yüzden 10 000 kaldı.
+
 ## Test
 
 ```bash
@@ -153,7 +165,7 @@ Uçtan uca test, örnek ajanı iki yerel süreç olarak API’ye karşı çalı�
 
 ## OpenShift Local
 
-Yarın CRC üzerinde, `kubeadmin` ile. Geliştirici kullanıcısı ad alanları arasında RoleBinding yazamayabilir.
+Yarınki doğrulama adımları ve beklenen çıktılar `OPENSHIFT-LOCAL-CHECKLIST.md` dosyasındadır. Kurulum `kubeadmin` ile yapılır. Geliştirici kullanıcısı ad alanları arasında RoleBinding yazamayabilir.
 
 ```bash
 crc start
@@ -224,8 +236,9 @@ Parolalar chart değerlerindeki geliştirme varsayılanlarıdır (`agentrt`, `ag
 
 - Kimlik doğrulama yok. Arayüz ve `/api` ağda kim varsa açıktır. İç uçlar koşum jetonu ister.
 - Executor ile harness aynı pod ağını paylaşır. Executor’un ortamında DSN ve jeton yoktur; yine de podun ağ arayüzünü görür.
-- Oracle sürücüsü ve SQL süzgeci testlidir. Oracle konteyneri burada çalıştırılmadı.
-- S3 yolu kodda var. Yerel depo test edildi. SeaweedFS entegrasyonu çalıştırılmadı.
+- Oracle sürücüsü ve SQL süzgeci testlidir. Bu makinede 1521 portu kapalı; Oracle Free kurulmadı.
+- S3 yolu SeaweedFS 3.80 ile denendi. MinIO’nun güncel ikili dosyası AIStor lisansına geçtiği için kullanılmadı.
+- Gerçek bir OpenAI uyumlu modele ağırlık indirilmedi. `tests/test_openai_client.py` yerel bir Chat Completions sunucusuna model adını, bearer jetonunu ve `response_format` geri çekilmesini doğrular. `LLM_MODE=fake` demo varsayılanıdır.
 - Gerçek bir kümede Job kalkmadı. Docker, kind ve kubectl bu makinede yok.
 - İmajlar burada derlenmedi.
 - Denetim kaydı güncellenemez ve silinemez. Başka tablolar normaldir.
