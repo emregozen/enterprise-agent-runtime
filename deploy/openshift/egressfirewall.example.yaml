@@ -1,0 +1,22 @@
+# Example only. Apply in the run namespace after replacing the CIDRs.
+# Helm does not install this object. OpenShift EgressFirewall is cluster-scoped
+# per namespace and replaces, rather than adds to, the NetworkPolicy ipBlocks.
+apiVersion: k8s.ovn.org/v1
+kind: EgressFirewall
+metadata:
+  name: default
+  namespace: agent-runs
+spec:
+  egress:
+    - type: Allow
+      to:
+        dnsName: control-plane.agent-runtime.svc.cluster.local
+    - type: Allow
+      to:
+        cidrSelector: 10.128.0.0/14
+    - type: Allow
+      to:
+        cidrSelector: 172.30.0.0/16
+    - type: Deny
+      to:
+        cidrSelector: 0.0.0.0/0

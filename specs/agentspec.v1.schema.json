@@ -1,0 +1,304 @@
+{
+  "$defs": {
+    "DataSourceRef": {
+      "properties": {
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "allowTables": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowtables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "ref",
+        "allowTables"
+      ],
+      "title": "DataSourceRef",
+      "type": "object"
+    },
+    "Metadata": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        },
+        "owner": {
+          "default": "ekip",
+          "title": "Owner",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Metadata",
+      "type": "object"
+    },
+    "ModelSpec": {
+      "properties": {
+        "class": {
+          "default": "local-default",
+          "title": "Class",
+          "type": "string"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fallback"
+        }
+      },
+      "title": "ModelSpec",
+      "type": "object"
+    },
+    "OutputSpec": {
+      "properties": {
+        "report": {
+          "const": "markdown",
+          "default": "markdown",
+          "title": "Report",
+          "type": "string"
+        },
+        "artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "notify": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notify",
+          "type": "array"
+        }
+      },
+      "title": "OutputSpec",
+      "type": "object"
+    },
+    "RuntimeSpec": {
+      "properties": {
+        "image": {
+          "default": "agent-runtime-py312:0.2.0",
+          "title": "Image",
+          "type": "string"
+        },
+        "cpu": {
+          "default": "500m",
+          "title": "Cpu",
+          "type": "string"
+        },
+        "memory": {
+          "default": "1Gi",
+          "title": "Memory",
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "default": 900,
+          "maximum": 86400,
+          "minimum": 30,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "title": "RuntimeSpec",
+      "type": "object"
+    },
+    "ScheduleSpec": {
+      "properties": {
+        "mode": {
+          "default": "manual",
+          "enum": [
+            "cron",
+            "self",
+            "hybrid",
+            "manual"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "cron": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cron"
+        },
+        "timeZone": {
+          "default": "Europe/Istanbul",
+          "title": "Timezone",
+          "type": "string"
+        },
+        "selfScheduling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SelfScheduling"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ScheduleSpec",
+      "type": "object"
+    },
+    "SelfScheduling": {
+      "properties": {
+        "minInterval": {
+          "default": "1h",
+          "title": "Mininterval",
+          "type": "string"
+        },
+        "maxInterval": {
+          "default": "7d",
+          "title": "Maxinterval",
+          "type": "string"
+        },
+        "maxRunsPerDay": {
+          "default": 4,
+          "maximum": 48,
+          "minimum": 1,
+          "title": "Maxrunsperday",
+          "type": "integer"
+        },
+        "window": {
+          "default": "07:00-20:00",
+          "title": "Window",
+          "type": "string"
+        }
+      },
+      "title": "SelfScheduling",
+      "type": "object"
+    },
+    "SpecBody": {
+      "properties": {
+        "goal": {
+          "maxLength": 4000,
+          "minLength": 8,
+          "title": "Goal",
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSpec"
+        },
+        "datasources": {
+          "items": {
+            "$ref": "#/$defs/DataSourceRef"
+          },
+          "minItems": 1,
+          "title": "Datasources",
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeSpec"
+        },
+        "schedule": {
+          "$ref": "#/$defs/ScheduleSpec"
+        },
+        "output": {
+          "$ref": "#/$defs/OutputSpec"
+        },
+        "verification": {
+          "$ref": "#/$defs/VerificationSpec"
+        },
+        "dryRunRowLimit": {
+          "default": 1000,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Dryrunrowlimit",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "goal",
+        "datasources"
+      ],
+      "title": "SpecBody",
+      "type": "object"
+    },
+    "VerificationSpec": {
+      "properties": {
+        "crossCheckSql": {
+          "default": true,
+          "title": "Crosschecksql",
+          "type": "boolean"
+        },
+        "maxRepairRounds": {
+          "default": 2,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Maxrepairrounds",
+          "type": "integer"
+        },
+        "numericTolerance": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "maximum": 10000,
+          "title": "Numerictolerance",
+          "type": "number"
+        }
+      },
+      "title": "VerificationSpec",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "apiVersion": {
+      "const": "agents.internal/v1",
+      "default": "agents.internal/v1",
+      "title": "Apiversion",
+      "type": "string"
+    },
+    "kind": {
+      "const": "AgentSpec",
+      "default": "AgentSpec",
+      "title": "Kind",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/SpecBody"
+    }
+  },
+  "required": [
+    "metadata",
+    "spec"
+  ],
+  "title": "AgentSpec",
+  "type": "object"
+}

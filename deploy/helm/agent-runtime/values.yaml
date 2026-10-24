@@ -1,0 +1,75 @@
+namespace: agent-runtime
+runNamespace: agent-runs
+createNamespaces: true
+
+# Empty keeps short image names. OpenShift Local sets the internal registry in values-crc.yaml.
+imageRegistry: ""
+runtimeImage: agent-runtime-py312:0.2.0
+uiImage: agent-runtime-ui:0.2.0
+imagePullPolicy: IfNotPresent
+grantImagePuller: false
+
+controlPlane:
+  replicas: 1
+
+ui:
+  replicas: 1
+
+route:
+  enabled: false
+  host: ""
+
+postgres:
+  enabled: true
+  image: quay.io/sclorg/postgresql-16-c9s
+  user: agentrt
+  password: agentrt
+  adminPassword: agentrt-admin
+  database: agentrt
+  storage: 8Gi
+
+llm:
+  mode: fake
+  baseUrl: http://127.0.0.1:11434/v1
+  model: qwen2.5-coder:7b
+  apiKey: ""
+  modelClasses: ""
+
+runBackend: kubernetes
+schedulerEnabled: true
+schedulerIntervalSeconds: 15
+seedDemo: true
+seedSalesRows: 20000
+salesRoPassword: sales_ro
+
+artifacts:
+  backend: local
+  dir: /var/artifacts
+  persistence: 5Gi
+  s3Endpoint: ""
+  s3Bucket: agent-artifacts
+  s3AccessKey: ""
+  s3SecretKey: ""
+  s3Region: us-east-1
+
+tools:
+  emailApiUrl: ""
+  emailApiToken: ""
+  smsApiUrl: ""
+  smsApiToken: ""
+  httpToolBaseUrl: ""
+  httpToolToken: ""
+  emailAllowlist: "finans@sirket.local,*@sirket.local"
+
+otel:
+  endpoint: ""
+  serviceName: agent-runtime
+
+# Extra egress for run pods. In-cluster DNS, control plane and Postgres are always allowed.
+# Add the LLM gateway and external databases as ipBlocks. Leave empty until those addresses are known.
+networkPolicy:
+  enabled: true
+  extraEgress: []
+  # - name: llm
+  #   cidr: 10.20.0.0/24
+  #   port: 443

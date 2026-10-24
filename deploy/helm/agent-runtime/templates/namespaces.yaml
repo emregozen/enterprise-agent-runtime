@@ -1,0 +1,15 @@
+{{- if .Values.createNamespaces }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/part-of: agent-runtime
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.runNamespace }}
+  labels:
+    app.kubernetes.io/part-of: agent-runtime
+{{- end }}

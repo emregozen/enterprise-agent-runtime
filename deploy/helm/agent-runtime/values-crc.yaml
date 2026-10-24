@@ -1,0 +1,13 @@
+imageRegistry: image-registry.openshift-image-registry.svc:5000/agent-runtime
+imagePullPolicy: Always
+grantImagePuller: true
+runBackend: kubernetes
+route:
+  enabled: true
+llm:
+  mode: fake
+seedDemo: true
+seedSalesRows: 20000
+networkPolicy:
+  enabled: true
+  extraEgress: []

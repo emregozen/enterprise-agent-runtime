@@ -1,0 +1,19 @@
+Ajan Çalıştırıcı {{ .Chart.AppVersion }} kuruldu.
+
+Kontrol düzlemi: http://control-plane.{{ .Values.namespace }}.svc:8841
+Arayüz servisi: http://ui.{{ .Values.namespace }}.svc:8842
+Koşum ad alanı: {{ .Values.runNamespace }}
+
+{{- if .Values.route.enabled }}
+Route:
+  oc get route agent-runtime -n {{ .Values.namespace }}
+{{- else }}
+Yerel yönlendirme:
+  oc port-forward -n {{ .Values.namespace }} svc/ui 8842:8842
+{{- end }}
+
+Run podları varsayılan olarak LLM ve dış veritabanına çıkamaz.
+deploy/helm/agent-runtime/values.yaml içindeki networkPolicy.extraEgress listesine
+ağ geçidinin CIDR ve portunu ekleyin.
+
+Parolalar chart values içindeki geliştirme varsayılanlarıdır. Kurumsal kurulumda değiştirin.

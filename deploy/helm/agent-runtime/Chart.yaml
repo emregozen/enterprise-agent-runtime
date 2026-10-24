@@ -1,0 +1,6 @@
+apiVersion: v2
+name: agent-runtime
+description: Job-per-run agent control plane, UI, and sample Postgres for OpenShift.
+type: application
+version: 0.2.0
+appVersion: "0.2.0"

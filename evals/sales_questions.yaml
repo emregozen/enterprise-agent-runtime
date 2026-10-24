@@ -1,0 +1,9 @@
+questions:
+  - id: daily-region
+    description: Hafta içi her sabah dünkü satışları bölge bazında özetle, toplam tutarı hesapla, yüzde 10'dan büyük sapmaları açıkla, gerekirse kendisi yeniden baksın ve finans@sirket.local adresine e-posta gönder.
+    expect_tool: send_email
+    expect_schedule: hybrid
+  - id: manual
+    description: Satış tablosundaki ürün adetlerini bölge bazında say ve raporu yalnızca ekrana yaz.
+    expect_tool: null
+    expect_schedule: manual

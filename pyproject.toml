@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-runtime"
+version = "0.2.0"
+description = "Job-per-run enterprise agent runtime control plane, harness, and executor."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.14",
+  "psycopg[binary]>=3.2",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.6",
+  "pyyaml>=6",
+  "croniter>=5.0",
+  "httpx>=0.27",
+  "sqlglot>=26.0",
+  "kubernetes>=31.0",
+  "boto3>=1.35",
+  "pyarrow>=18.0",
+  "duckdb>=1.1",
+  "polars>=1.14",
+  "oracledb>=2.5",
+  "openai>=1.55",
+  "opentelemetry-api>=1.28",
+  "opentelemetry-sdk>=1.28",
+  "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*", "sqlguard*", "datasources*", "executor*", "harness*", "control_plane*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

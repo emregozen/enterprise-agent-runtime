@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: control-plane
+  ports:
+    - name: http
+      port: 8841
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      serviceAccountName: agent-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: {{ include "agent-runtime.runtimeImage" . }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["python", "-m", "control_plane"]
+          ports:
+            - name: http
+              containerPort: 8841
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: DATABASE_URL
+            - name: SALES_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: SALES_DATABASE_URL
+            - name: SALES_ADMIN_URL
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: SALES_ADMIN_URL
+            - name: SALES_RO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: SALES_RO_PASSWORD
+            - name: PORT
+              value: "8841"
+            - name: HOST
+              value: "0.0.0.0"
+            - name: LLM_MODE
+              value: {{ .Values.llm.mode | quote }}
+            - name: LLM_BASE_URL
+              value: {{ .Values.llm.baseUrl | quote }}
+            - name: LLM_MODEL
+              value: {{ .Values.llm.model | quote }}
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: LLM_API_KEY
+            - name: LLM_MODEL_CLASSES
+              value: {{ .Values.llm.modelClasses | quote }}
+            - name: RUN_BACKEND
+              value: {{ .Values.runBackend | quote }}
+            - name: RUN_NAMESPACE
+              value: {{ .Values.runNamespace | quote }}
+            - name: IMAGE_REGISTRY
+              value: {{ .Values.imageRegistry | quote }}
+            - name: RUNTIME_IMAGE
+              value: {{ .Values.runtimeImage | quote }}
+            - name: IMAGE_PULL_POLICY
+              value: {{ .Values.imagePullPolicy | quote }}
+            - name: CONTROL_PLANE_PUBLIC_URL
+              value: http://control-plane.{{ .Values.namespace }}.svc:8841
+            - name: CONTROL_PLANE_INTERNAL_URL
+              value: http://control-plane.{{ .Values.namespace }}.svc:8841
+            - name: SEED_DEMO
+              value: {{ .Values.seedDemo | quote }}
+            - name: SEED_SALES_ROWS
+              value: {{ .Values.seedSalesRows | quote }}
+            - name: SCHEDULER_ENABLED
+              value: {{ .Values.schedulerEnabled | quote }}
+            - name: SCHEDULER_INTERVAL_SECONDS
+              value: {{ .Values.schedulerIntervalSeconds | quote }}
+            - name: ARTIFACT_BACKEND
+              value: {{ .Values.artifacts.backend | quote }}
+            - name: ARTIFACT_DIR
+              value: {{ .Values.artifacts.dir | quote }}
+            - name: WORK_ROOT
+              value: /tmp/work
+            - name: LOG_DIR
+              value: /tmp/logs
+            - name: S3_ENDPOINT_URL
+              value: {{ .Values.artifacts.s3Endpoint | quote }}
+            - name: S3_BUCKET
+              value: {{ .Values.artifacts.s3Bucket | quote }}
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: S3_ACCESS_KEY
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: S3_SECRET_KEY
+            - name: S3_REGION
+              value: {{ .Values.artifacts.s3Region | quote }}
+            - name: EMAIL_API_URL
+              value: {{ .Values.tools.emailApiUrl | quote }}
+            - name: EMAIL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: EMAIL_API_TOKEN
+            - name: SMS_API_URL
+              value: {{ .Values.tools.smsApiUrl | quote }}
+            - name: SMS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: SMS_API_TOKEN
+            - name: HTTP_TOOL_BASE_URL
+              value: {{ .Values.tools.httpToolBaseUrl | quote }}
+            - name: HTTP_TOOL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-env
+                  key: HTTP_TOOL_TOKEN
+            - name: EMAIL_RECIPIENT_ALLOWLIST
+              value: {{ .Values.tools.emailAllowlist | quote }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.otel.serviceName | quote }}
+            - name: HOME
+              value: /tmp
+            - name: TMPDIR
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 36
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: artifacts
+              mountPath: /var/artifacts
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: artifacts
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: artifacts
+  namespace: {{ .Values.namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.artifacts.persistence }}

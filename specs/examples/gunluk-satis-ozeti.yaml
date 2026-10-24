@@ -1,0 +1,44 @@
+apiVersion: agents.internal/v1
+kind: AgentSpec
+metadata:
+  name: gunluk-satis-ozeti
+  version: 1
+  owner: finans-ekibi
+spec:
+  goal: Dünkü satışları bölge bazında özetle, toplam tutarı hesapla, yüzde 10'dan
+    büyük sapmaları açıkla ve finans@sirket.local adresine e-posta gönder.
+  model:
+    class: local-default
+  datasources:
+  - ref: postgres-sales
+    allowTables:
+    - sales
+  tools:
+  - send_email
+  runtime:
+    image: agent-runtime-py312:0.2.0
+    cpu: 500m
+    memory: 1Gi
+    timeoutSeconds: 900
+  schedule:
+    mode: hybrid
+    cron: 0 7 * * 1-5
+    timeZone: Europe/Istanbul
+    selfScheduling:
+      minInterval: 1h
+      maxInterval: 7d
+      maxRunsPerDay: 4
+      window: 07:00-20:00
+  output:
+    report: markdown
+    artifacts:
+    - json
+    - md
+    - svg
+    notify:
+    - send_email
+  verification:
+    crossCheckSql: true
+    maxRepairRounds: 2
+    numericTolerance: 1.0
+  dryRunRowLimit: 1000

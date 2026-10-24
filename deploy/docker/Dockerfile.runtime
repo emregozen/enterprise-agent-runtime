@@ -1,0 +1,33 @@
+# Default base is the public Python image so the build does not need a Red Hat
+# subscription. Air-gapped sites should retag this image into the internal
+# registry. A root-capable Python 3.12 base can be swapped with:
+#   podman build --build-arg BASE_IMAGE=<mirror>/python:3.12 -f deploy/docker/Dockerfile.runtime .
+# UBI9 python-312 is not the default: that image expects a virtualenv under
+# /opt/app-root and a non-root build user. See README, "Sapmalar".
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+
+WORKDIR /opt/agent-runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HOME=/tmp \
+    TMPDIR=/tmp
+
+COPY pyproject.toml README.md ./
+COPY shared ./shared
+COPY sqlguard ./sqlguard
+COPY datasources ./datasources
+COPY executor ./executor
+COPY harness ./harness
+COPY control_plane ./control_plane
+COPY scripts ./scripts
+
+RUN pip install --no-cache-dir . \
+    && mkdir -p /tmp /work \
+    && chgrp -R 0 /opt/agent-runtime /tmp /work \
+    && chmod -R g=u /opt/agent-runtime /tmp /work
+
+USER 1001
+EXPOSE 8841
+CMD ["python", "-m", "control_plane"]
