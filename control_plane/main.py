@@ -26,6 +26,8 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if settings.resolved_artifact_store() == "pvc":
+            settings.ensure_dirs()
         if settings.migrate_on_start:
             _init_with_retry()
         stop = threading.Event()

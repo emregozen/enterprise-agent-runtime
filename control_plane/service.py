@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import uuid
@@ -27,8 +28,11 @@ from control_plane.policy import (
     evaluate_self_schedule,
     local_day_start,
 )
-from shared.artifacts import build_store, sha256_bytes
+from shared.artifacts import build_store, safe_artifact_name, sha256_bytes
 from shared.spec import AgentSpec, parse_duration
+
+
+log = logging.getLogger("control-plane")
 
 
 class ServiceError(Exception):
@@ -400,23 +404,104 @@ def add_step(db: Session, run: Run, item: dict) -> RunStep:
     return step
 
 
+def artifact_key(run: Run, name: str) -> str:
+    safe = safe_artifact_name(name)
+    return f"runs/{run.agent_name}/{run.id}/{safe}"
+
+
 def add_artifact(db: Session, run: Run, *, name: str, media_type: str, data: bytes, claimed_sha: str) -> Artifact:
+    settings = get_settings_safe()
+    if len(data) > settings.artifact_max_bytes:
+        raise ServiceError(f"artefakt {settings.artifact_max_bytes} bayt sınırını aşıyor", 413)
+    safe = safe_artifact_name(name)
     digest = sha256_bytes(data)
     if claimed_sha and claimed_sha != digest:
         raise ServiceError("artefakt özeti uyuşmuyor", 400)
-    key = f"runs/{run.agent_name}/{run.id}/{name}"
-    uri = build_store(get_settings_safe()).put_bytes(key, data, media_type)
+    store = build_store(settings)
+    uri = store.put_bytes(artifact_key(run, safe), data, media_type)
+    try:
+        return _insert_artifact(db, run, name=safe, media_type=media_type, uri=uri, digest=digest, size=len(data))
+    except Exception:
+        store.delete(uri)
+        raise
+
+
+def record_uploaded_artifact(
+    db: Session,
+    run: Run,
+    *,
+    name: str,
+    media_type: str,
+    uri: str,
+    digest: str,
+    size: int,
+    claimed_sha: str,
+) -> Artifact:
+    safe = safe_artifact_name(name)
+    store = build_store(get_settings_safe())
+    if claimed_sha and claimed_sha != digest:
+        store.delete(uri)
+        raise ServiceError("artefakt özeti uyuşmuyor", 400)
+    try:
+        return _insert_artifact(db, run, name=safe, media_type=media_type, uri=uri, digest=digest, size=size)
+    except Exception:
+        store.delete(uri)
+        raise
+
+
+def _insert_artifact(db: Session, run: Run, *, name: str, media_type: str, uri: str, digest: str, size: int) -> Artifact:
     row = Artifact(
         run_id=run.id,
         name=name,
-        media_type=media_type,
+        media_type=media_type[:120],
         storage_uri=uri,
         sha256=digest,
-        size_bytes=len(data),
+        size_bytes=size,
     )
     db.add(row)
     db.commit()
     return row
+
+
+def purge_expired_artifacts(db: Session, *, now: datetime | None = None, retention_days: int | None = None) -> int:
+    settings = get_settings_safe()
+    store = build_store(settings)
+    days = settings.artifact_retention_days if retention_days is None else retention_days
+    removed = 0
+    if days > 0:
+        moment = now or utcnow()
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        cutoff = moment - timedelta(days=days)
+        rows = (
+            db.query(Artifact)
+            .join(Run, Artifact.run_id == Run.id)
+            .filter(Artifact.created_at < cutoff)
+            .filter(Run.status.notin_(["pending", "running"]))
+            .all()
+        )
+        for row in rows:
+            try:
+                store.delete(row.storage_uri)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                log.warning("artefakt dosyası silinemedi: %s", row.storage_uri)
+                continue
+            audit(
+                db,
+                "system",
+                "artifact.purged",
+                "artifact",
+                str(row.id),
+                {"name": row.name, "run_id": str(row.run_id), "size_bytes": row.size_bytes},
+            )
+            db.delete(row)
+            removed += 1
+        if removed:
+            db.commit()
+    store.sweep_partials(86400)
+    return removed
 
 
 def get_settings_safe():

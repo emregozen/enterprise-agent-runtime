@@ -10,6 +10,9 @@ imagePullPolicy: IfNotPresent
 grantImagePuller: false
 
 controlPlane:
+  # ReadWriteOnce artifact disk mounts on one pod. Leave this at 1 while
+  # artifacts.store is pvc. More replicas need artifacts.store=s3 or RWX storage.
+  # The chart refuses replicas greater than 1 in pvc mode.
   replicas: 1
 
 ui:
@@ -43,9 +46,13 @@ seedSalesRows: 20000
 salesRoPassword: sales_ro
 
 artifacts:
-  backend: local
+  # pvc | s3. pvc is a ReadWriteOnce volume mounted only on the control plane.
+  store: pvc
   dir: /var/artifacts
-  persistence: 5Gi
+  size: 5Gi
+  storageClass: ""
+  retentionDays: 14
+  maxBytes: 20000000
   s3Endpoint: ""
   s3Bucket: agent-artifacts
   s3AccessKey: ""

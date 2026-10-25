@@ -33,8 +33,10 @@ services:
       SCHEDULER_ENABLED: "true"
       CONTROL_PLANE_PUBLIC_URL: http://127.0.0.1:8841
       CONTROL_PLANE_INTERNAL_URL: http://control-plane:8841
-      ARTIFACT_BACKEND: local
+      ARTIFACT_STORE: pvc
       ARTIFACT_DIR: /tmp/artifacts
+      ARTIFACT_RETENTION_DAYS: "14"
+      ARTIFACT_MAX_BYTES: "20000000"
       WORK_ROOT: /tmp/work
       LOG_DIR: /tmp/logs
       EMAIL_RECIPIENT_ALLOWLIST: finans@sirket.local,*@sirket.local

@@ -5,6 +5,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from shared.artifacts import normalize_artifact_store
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,8 +29,13 @@ class Settings(BaseSettings):
     control_plane_public_url: str = "http://127.0.0.1:8841"
     control_plane_internal_url: str = "http://127.0.0.1:8841"
 
-    artifact_backend: str = "local"
+    # pvc is the control-plane directory (a PersistentVolume on OpenShift). s3 stays optional.
+    # ARTIFACT_BACKEND=local is accepted as an alias of pvc when ARTIFACT_STORE is unset.
+    artifact_store: str = "pvc"
+    artifact_backend: str = ""
     artifact_dir: str = "var/artifacts"
+    artifact_retention_days: int = 14
+    artifact_max_bytes: int = 20_000_000
     s3_endpoint_url: str = ""
     s3_bucket: str = "agent-artifacts"
     s3_access_key: str = ""
@@ -105,6 +112,17 @@ class Settings(BaseSettings):
 
     def recipient_allowlist(self) -> list[str]:
         return [part.strip() for part in self.email_recipient_allowlist.split(",") if part.strip()]
+
+    def resolved_artifact_store(self) -> str:
+        store = (self.artifact_store or "").strip().lower()
+        backend = (self.artifact_backend or "").strip().lower()
+        if store and store != "pvc":
+            return normalize_artifact_store(store)
+        if os.environ.get("ARTIFACT_STORE", "").strip():
+            return normalize_artifact_store(store or "pvc")
+        if backend:
+            return normalize_artifact_store(backend)
+        return normalize_artifact_store(store or "pvc")
 
     def ensure_dirs(self) -> None:
         Path(self.artifact_dir).mkdir(parents=True, exist_ok=True)

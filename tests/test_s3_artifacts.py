@@ -41,7 +41,8 @@ pytestmark = pytest.mark.skipif(not _s3_up(), reason=f"S3 yok: {ENDPOINT}")
 def _settings():
     return get_settings().model_copy(
         update={
-            "artifact_backend": "s3",
+            "artifact_store": "s3",
+            "artifact_backend": "",
             "s3_endpoint_url": ENDPOINT,
             "s3_bucket": BUCKET,
             "s3_access_key": ACCESS,

@@ -167,6 +167,9 @@ export default function RunPage() {
 
       <section className="space-y-3">
         <h2 className="font-serif text-2xl">Çıktılar</h2>
+        <p className="text-sm text-muted">
+          Rapor, kontrol düzleminin kalıcı diskindedir. Koşum podu dosyayı iç API’ye akıtır. İndirme buradan yapılır. Saklama süresi dolunca eski dosya silinir.
+        </p>
         {run.artifacts.length === 0 && <Card><p className="text-sm text-muted">Henüz artefakt yok.</p></Card>}
         <div className="grid gap-3 sm:grid-cols-2">
           {run.artifacts.map((artifact) => (

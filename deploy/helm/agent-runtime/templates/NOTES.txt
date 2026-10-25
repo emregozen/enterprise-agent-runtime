@@ -12,7 +12,17 @@ Yerel yönlendirme:
   oc port-forward -n {{ .Values.namespace }} svc/ui 8842:8842
 {{- end }}
 
+Artefakt deposu: {{ .Values.artifacts.store }}.
+{{- if eq .Values.artifacts.store "pvc" }}
+PVC `artifacts` yalnızca control-plane poduna bağlanır (ReadWriteOnce, {{ .Values.artifacts.size }}).
+controlPlane.replicas 1 kalır. Birden fazla replika için artifacts.store=s3 veya ReadWriteMany gerekir.
+Saklama: {{ .Values.artifacts.retentionDays }} gün.
+{{- else }}
+S3 kovası {{ .Values.artifacts.s3Bucket }}. Artefakt PVC'si bu modda oluşturulmaz.
+{{- end }}
+
 Run podları varsayılan olarak LLM ve dış veritabanına çıkamaz.
+Artefakt yüklemesi yeni bir porta çıkmaz; mevcut kontrol düzlemi çıkışı :8841 yeter.
 deploy/helm/agent-runtime/values.yaml içindeki networkPolicy.extraEgress listesine
 ağ geçidinin CIDR ve portunu ekleyin.
 

@@ -12,6 +12,7 @@ os.environ["RUN_BACKEND"] = "local"
 os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["SEED_DEMO"] = "false"
 os.environ["SEED_SALES_ROWS"] = "0"
+os.environ["ARTIFACT_STORE"] = "pvc"
 os.environ["ARTIFACT_BACKEND"] = "local"
 os.environ["ARTIFACT_DIR"] = str(ROOT / "var" / "test-artifacts")
 os.environ["WORK_ROOT"] = str(ROOT / "var" / "test-work")

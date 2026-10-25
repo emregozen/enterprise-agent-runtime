@@ -46,11 +46,24 @@ tarayıcı → UI :8842 → kontrol düzlemi :8841 → Postgres
                          ├─ harness  (RUN_TOKEN, DSN, LLM)
                          └─ executor (sır yok, 127.0.0.1:7070)
                               paylaşılan emptyDir /work
+                              artefakt PVC'si yok
 ```
 
-Run podu restricted-v2 ile uyumludur: kök değil, `runAsUser` yok (platform UID verir), yetki yükseltme yok, kök dosya sistemi salt okunur, tüm yetkiler düşürülür, `automountServiceAccountToken: false`, `enableServiceLinks: false`. NetworkPolicy çıkışı DNS, kontrol düzlemi ve Postgres ile sınırlar. LLM ve dış veritabanı için `networkPolicy.extraEgress` doldurulur.
+Run podu restricted-v2 ile uyumludur: kök değil, `runAsUser` yok (platform UID verir), yetki yükseltme yok, kök dosya sistemi salt okunur, tüm yetkiler düşürülür, `automountServiceAccountToken: false`, `enableServiceLinks: false`. NetworkPolicy çıkışı DNS, kontrol düzlemi ve Postgres ile sınırlar. LLM ve dış veritabanı için `networkPolicy.extraEgress` doldurulur. Artefakt yüklemesi bu listenin içindeki kontrol düzlemi çıkışını (`:8841`) kullanır. Yeni bir kapı açılmaz.
 
-Artefaktlar kontrol düzlemine yüklenir. Varsayılan depo yerel dizindir. `ARTIFACT_BACKEND=s3` ve `S3_ENDPOINT_URL` ile S3 uyumlu depoya geçilir.
+## Neden bu bileşenler?
+
+Satış tablosu on milyon satıra çıkabilir. Modele bu tablonun ham hali gitmez; modele yalnızca hesaplanmış kısa özet gider.
+
+Önce soru veritabanına sorulur: dünün tutarı bölge bölge nedir? Postgres indeksi sekiz günlük pencereyi onlarca satıra indirir. Toplama verinin yanında biter. Buna SQL pushdown denir. On milyon satırlık denemede tam tablo toplamı 735 ms, günlük pencere 0,2 ms sürdü.
+
+Kodun kendisi hesaplayacaksa satırlar parça parça okunur ve Parquet dosyasına yazılır. Parquet sayıları sütun sütun tutar, bu yüzden aynı veri Python listesinde olduğundan çok daha az yer kaplar. On milyon satır yaklaşık 116 MB dosya oldu. Okuyan sürecin tepe belleği 114 MB idi. Parça boyu 10 000 satırdır; 2 000 ve 50 000 de denendi, 10 000 daha hızlı kaldı.
+
+DuckDB bu dosyanın üstünde, koşum podunun içinde çalışır. Ayrı bir hesap sunucusu kurulmaz. Pod, toplamı bir de SQL ile sayar. İki sonuç uyuşursa rapora güvenilir. Uyuşmazsa koşum `needs_review` olur ve e-posta gitmez.
+
+Pod raporu geçici `/work` alanında üretir ve koşum jetonuyla kontrol düzlemine akıtır. Düzlem boyutu sınırlar ve kalıcı kopyayı kendi diskine yazar. OpenShift’te bu disk bir PersistentVolume’dur. Yalnızca kontrol düzlemi podu onu görür. `ReadWriteOnce` olduğu için kontrol düzlemi tek replika kalır. Birden fazla replika gerekiyorsa `ARTIFACT_STORE=s3` seçilir.
+
+SeaweedFS, S3 yolunu bu makinede denemek için kurulan yerel bir deneme tezgahıdır. Kurumun nesne deposu ayrıdır. İlk fazın varsayılanı PVC’dir.
 
 ## Sapmalar
 
@@ -64,7 +77,7 @@ Referans yerleşime göre bilinçli farklar `docs/adr/` altındadır.
 | Çekme | ADBC ve ConnectorX yok. psycopg sunucu imleci, Oracle `fetch_df_batches`, diğerleri SQLAlchemy. |
 | Grafik | matplotlib yok. Rapor SVG’si standart kütüphane. |
 | İmaj | Varsayılan taban `python:3.12-slim`. İç ayna için imajı yeniden etiketleyin. `BASE_IMAGE` ile kök yetkili bir Python 3.12 tabanı verilebilir. UBI9 python-312 sanal ortam beklediği için varsayılan değildir. |
-| Artefakt | Pod S3’e yazmaz. Kontrol düzlemi yazar. |
+| Artefakt | Kalıcı kopya kontrol düzleminin PVC’sindedir. Pod dosyayı iç API’ye akıtır. S3 seçenek olarak durur. |
 | Yerel Kubernetes | Docker ve kind bu ortamda yok. Yerel arka uç iki süreçtir. Job belgesi sahte API ile test edilir. |
 | Kaynak isteği | Referanstaki 1 CPU / 2Gi yerine kap başına 500m / 1Gi. OpenShift Local’da iki kap sığsın diye. Spec JSON’dan yükseltilir. |
 | Şema | Açılışta `create_all` ve denetim tetikleyicisi. Ayrı bir Alembic revizyonu üretilmedi. |
@@ -128,7 +141,9 @@ docker compose --profile s3 up        # SeaweedFS, S3 API makinede 8833
 
 Oracle DSN örneği: `oracle://system:oracle@127.0.0.1:1521/FREEPDB1`. Kaynak `dialect: oracle` ile kaydedilir. Oracle sürücüsü ince moddadır; anlık istemci gerekmez. Bu imaj burada çekilmedi.
 
-SeaweedFS için kontrol düzleminde `ARTIFACT_BACKEND=s3` ve `S3_ENDPOINT_URL=http://seaweedfs:8333`. Docker olmadan aynı yol, Apache-2.0 SeaweedFS 3.80 ikili dosyasıyla `127.0.0.1:8833` üzerinde denendi. Anahtar `agentrt` / `agentrt-secret`. `tests/test_s3_artifacts.py` nesneyi yazıp geri okur ve kontrol düzleminin artefakt kaydının `s3://` adresine düştüğünü görür. Sunucu yoksa test atlanır.
+Varsayılan artefakt deposu `ARTIFACT_STORE=pvc`dir. Yerelde bu, `ARTIFACT_DIR` klasörüdür (bu makinede `var/artifacts`). OpenShift’te aynı yol kontrol düzleminin PVC’sine bağlanır (`/var/artifacts`).
+
+S3 denemesi için `ARTIFACT_STORE=s3` ve `S3_ENDPOINT_URL=http://seaweedfs:8333`. Docker olmadan aynı yol, Apache-2.0 SeaweedFS 3.80 ikili dosyasıyla `127.0.0.1:8833` üzerinde denendi. Anahtar `agentrt` / `agentrt-secret`. `tests/test_s3_artifacts.py` nesneyi yazıp geri okur. Sunucu yoksa test atlanır. SeaweedFS, S3 seçeneğinin yerel provasıdır.
 
 ## Örnek satış verisi
 
@@ -228,7 +243,9 @@ helm upgrade agent-runtime deploy/helm/agent-runtime \
 
 İmaj adresi chart’ta `image-registry.openshift-image-registry.svc:5000/agent-runtime` olur. Podlar bu iç adresten çeker. `podman push` dış route’a yapılır.
 
-Satış tablosu açılışta `SEED_SALES_ROWS` kadar yüklenir (varsayılan 20 000). On milyon için `--set seedSalesRows=10000000`. Postgres kabında `readOnlyRootFilesystem` yoktur; SCL imajı veri dizinine yazar. Kontrol düzlemi ve arayüz salt okunur kök ile kalkar, yazılan yerler `emptyDir` ve artefakt PVC’sidir.
+Satış tablosu açılışta `SEED_SALES_ROWS` kadar yüklenir (varsayılan 20 000). On milyon için `--set seedSalesRows=10000000`. Postgres kabında `readOnlyRootFilesystem` yoktur; SCL imajı veri dizinine yazar. Kontrol düzlemi ve arayüz salt okunur kök ile kalkar. Kontrol düzleminin yazdığı yerler `emptyDir /tmp` ve artefakt PVC’sidir. PVC `ReadWriteOnce`, varsayılan boy 5Gi, depolama sınıfı boşsa kümenin varsayılan sınıfı kullanılır (`artifacts.storageClass`). Yalnızca control-plane Deployment bu diski bağlar. `controlPlane.replicas` 1 kalır. Chart, pvc modunda replikayı 1’in üstüne çıkarırsa kurulumu durdurur. Ölçek için `artifacts.store=s3` ya da ReadWriteMany bir sınıf gerekir.
+
+Eski raporlar `artifacts.retentionDays` (varsayılan 14) sonunda silinir. Zamanlayıcı bunu saatte bir yapar. `0` silmeyi kapatır. `SCHEDULER_ENABLED=false` ise temizlik döngüsü de durur.
 
 Parolalar chart değerlerindeki geliştirme varsayılanlarıdır (`agentrt`, `agentrt-admin`, `sales_ro`). Kurumda değiştirin.
 
@@ -237,12 +254,12 @@ Parolalar chart değerlerindeki geliştirme varsayılanlarıdır (`agentrt`, `ag
 - Kimlik doğrulama yok. Arayüz ve `/api` ağda kim varsa açıktır. İç uçlar koşum jetonu ister.
 - Executor ile harness aynı pod ağını paylaşır. Executor’un ortamında DSN ve jeton yoktur; yine de podun ağ arayüzünü görür.
 - Oracle sürücüsü ve SQL süzgeci testlidir. Bu makinede 1521 portu kapalı; Oracle Free kurulmadı.
-- S3 yolu SeaweedFS 3.80 ile denendi. MinIO’nun güncel ikili dosyası AIStor lisansına geçtiği için kullanılmadı.
+- S3 yolu SeaweedFS 3.80 ile denendi. Bu, PVC varsayılanının yanında duran seçenektir. MinIO’nun güncel ikili dosyası AIStor lisansına geçtiği için kullanılmadı.
 - Gerçek bir OpenAI uyumlu modele ağırlık indirilmedi. `tests/test_openai_client.py` yerel bir Chat Completions sunucusuna model adını, bearer jetonunu ve `response_format` geri çekilmesini doğrular. `LLM_MODE=fake` demo varsayılanıdır.
 - Gerçek bir kümede Job kalkmadı. Docker, kind ve kubectl bu makinede yok.
 - İmajlar burada derlenmedi.
 - Denetim kaydı güncellenemez ve silinemez. Başka tablolar normaldir.
 - Araç vekili saatte `TOOL_RATE_LIMIT_PER_HOUR` çağrıyı geçerse reddeder. Alıcı listesi `EMAIL_RECIPIENT_ALLOWLIST` dışına çıkamaz.
 - `needs_review` ve `dry_run` araç çağırmaz.
-- Büyük artefakt üst sınırı 20 MB.
+- Artefakt üst sınırı `ARTIFACT_MAX_BYTES` (varsayılan 20 MB). Saklama `ARTIFACT_RETENTION_DAYS` (varsayılan 14). PVC tek kontrol düzlemi replikasına bağlanır.
 - Pencere aynı gün içindedir (`07:00-20:00`). Geceyi aşan aralık desteklenmez.

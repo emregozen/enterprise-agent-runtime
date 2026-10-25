@@ -54,6 +54,10 @@ def test_job_is_restricted_and_executor_has_no_secrets():
     assert executor["securityContext"]["allowPrivilegeEscalation"] is False
     assert executor["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert any(item["name"] == "RUN_TOKEN" and "secretKeyRef" in item["valueFrom"] for item in harness["env"])
+    volumes = pod["volumes"]
+    assert {item["name"] for item in volumes} == {"work", "tmp"}
+    assert all("emptyDir" in item for item in volumes)
+    assert all("persistentVolumeClaim" not in item for item in volumes)
 
 
 def test_external_datasource_secret_is_not_copied_into_the_run_secret():

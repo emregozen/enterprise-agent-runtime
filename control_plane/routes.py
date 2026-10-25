@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import base64
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -14,20 +13,21 @@ from control_plane.models import Agent, AgentVersion, Artifact, AuditEvent, Data
 from control_plane.serialize import agent_out, run_out, schedule_out, spec_summary
 from control_plane.service import (
     ServiceError,
-    add_artifact,
     add_step,
     add_version,
     apply_self_schedule,
     complete_run,
     create_agent,
+    artifact_key,
     hash_token,
     load_sources_for_spec,
+    record_uploaded_artifact,
     trigger_run,
 )
 from control_plane.tool_proxy import ToolError, invoke_tool
 from datasources import open_source
 from harness.loop import builder_messages
-from shared.artifacts import build_store
+from shared.artifacts import ArtifactTooLarge, build_store
 from shared.config import get_settings
 from shared.llm import make_llm, parse_json_response
 from shared.spec import AgentSpec
@@ -70,13 +70,6 @@ class StepIn(BaseModel):
     name: str
     status: str = "succeeded"
     detail: dict = Field(default_factory=dict)
-
-
-class ArtifactIn(BaseModel):
-    name: str
-    media_type: str = "application/octet-stream"
-    sha256: str = ""
-    b64: str
 
 
 class CompleteIn(BaseModel):
@@ -128,7 +121,12 @@ def health(db: Session = Depends(get_db)):
 
     db.execute(text("SELECT 1"))
     settings = get_settings()
-    return {"ok": True, "llm_mode": settings.llm_mode, "run_backend": settings.run_backend}
+    return {
+        "ok": True,
+        "llm_mode": settings.llm_mode,
+        "run_backend": settings.run_backend,
+        "artifact_store": settings.resolved_artifact_store(),
+    }
 
 
 @public.get("/datasources")
@@ -331,11 +329,27 @@ def download_artifact(run_id: uuid.UUID, artifact_id: uuid.UUID, db: Session = D
     artifact = db.get(Artifact, artifact_id)
     if artifact is None or artifact.run_id != run_id:
         raise HTTPException(404, "artefakt yok")
-    data = build_store(get_settings()).get_bytes(artifact.storage_uri)
-    return Response(
-        content=data,
+    store = build_store(get_settings())
+    try:
+        chunks = store.iter_chunks(artifact.storage_uri)
+        first = next(chunks, None)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "artefakt dosyası yok") from exc
+    except ValueError as exc:
+        raise HTTPException(404, "artefakt dosyası yok") from exc
+
+    def body():
+        if first is not None:
+            yield first
+        yield from chunks
+
+    return StreamingResponse(
+        body(),
         media_type=artifact.media_type,
-        headers={"Content-Disposition": f'attachment; filename="{artifact.name}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{artifact.name}"',
+            "Content-Length": str(artifact.size_bytes),
+        },
     )
 
 
@@ -383,19 +397,57 @@ def post_step(run_id: uuid.UUID, body: StepIn, authorization: str | None = Heade
 
 
 @internal.post("/runs/{run_id}/artifacts", status_code=201)
-def post_artifact(run_id: uuid.UUID, body: ArtifactIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+async def post_artifact(
+    run_id: uuid.UUID,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_artifact_name: str | None = Header(default=None),
+    x_artifact_sha256: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+):
     run = _auth_run(db, run_id, authorization)
+    settings = get_settings()
     try:
-        data = base64.b64decode(body.b64, validate=True)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(400, "artefakt base64 değil") from exc
-    if len(data) > 20_000_000:
-        raise HTTPException(413, "artefakt 20 MB sınırını aşıyor")
+        key = artifact_key(run, x_artifact_name or "")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    media = (request.headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip()
+    if not media or len(media) > 120:
+        media = "application/octet-stream"
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            announced = int(declared)
+        except ValueError as exc:
+            raise HTTPException(400, "Content-Length sayı olmalı") from exc
+        if announced > settings.artifact_max_bytes:
+            raise HTTPException(413, f"artefakt {settings.artifact_max_bytes} bayt sınırını aşıyor")
+    store = build_store(settings)
+    upload = store.start_upload(key, media, settings.artifact_max_bytes)
     try:
-        row = add_artifact(db, run, name=body.name, media_type=body.media_type, data=data, claimed_sha=body.sha256)
+        async for chunk in request.stream():
+            upload.write(chunk)
+        uri, size, digest = upload.finish()
+    except ArtifactTooLarge as exc:
+        upload.abort()
+        raise HTTPException(413, str(exc)) from exc
+    except Exception:
+        upload.abort()
+        raise
+    try:
+        row = record_uploaded_artifact(
+            db,
+            run,
+            name=x_artifact_name or "",
+            media_type=media,
+            uri=uri,
+            digest=digest,
+            size=size,
+            claimed_sha=(x_artifact_sha256 or "").strip(),
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    return {"id": str(row.id), "sha256": row.sha256}
+    return {"id": str(row.id), "sha256": row.sha256, "size_bytes": row.size_bytes}
 
 
 @internal.post("/runs/{run_id}/tools/{tool_name}")

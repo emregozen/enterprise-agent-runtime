@@ -193,6 +193,8 @@ def build_run_manifests(
                         "seccompProfile": {"type": "RuntimeDefault"},
                     },
                     "containers": [harness, executor],
+                    # Scratch only. Report files are streamed to the control plane;
+                    # the artifact PVC is mounted on the control plane, not on this pod.
                     "volumes": [
                         {"name": "work", "emptyDir": {"sizeLimit": "20Gi"}},
                         {"name": "tmp", "emptyDir": {"sizeLimit": "2Gi"}},

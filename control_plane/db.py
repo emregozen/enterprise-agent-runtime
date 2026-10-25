@@ -73,3 +73,4 @@ def init_db() -> None:
                 """
             )
         )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_artifacts_created_at ON artifacts (created_at)"))

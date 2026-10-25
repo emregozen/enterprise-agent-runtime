@@ -32,6 +32,7 @@ spec:
           port: 5353
         - protocol: TCP
           port: 5353
+    # Artifact upload uses this existing hop. Run pods do not mount the artifact PVC.
     - to:
         - namespaceSelector:
             matchLabels:

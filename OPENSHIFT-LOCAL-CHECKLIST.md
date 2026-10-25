@@ -87,6 +87,10 @@ Beklenen: `STATUS: deployed` ve `agent-runtime` adında bir Route.
 oc get pods -n agent-runtime
 oc get route agent-runtime -n agent-runtime
 oc get pvc -n agent-runtime
+oc get pvc artifacts -n agent-runtime -o jsonpath='{.status.phase} {.spec.accessModes[0]} {.spec.resources.requests.storage}{"\n"}'
+oc get deploy control-plane -n agent-runtime -o jsonpath='{.spec.replicas}{"\n"}'
+oc get deploy control-plane -n agent-runtime -o jsonpath='{range .spec.template.spec.containers[0].volumeMounts[*]}{.name}={.mountPath}{"\n"}{end}'
+oc set env deploy/control-plane -n agent-runtime --list | grep '^ARTIFACT_'
 ```
 
 Birkaç dakika içinde:
@@ -97,6 +101,21 @@ control-plane-xxxxxxxxxx-xxxxx   1/1     Running   0
 postgres-xxxxxxxxxx-xxxxx        1/1     Running   0
 ui-xxxxxxxxxx-xxxxx              1/1     Running   0
 ```
+
+PVC ve bağlama:
+
+```text
+Bound ReadWriteOnce 5Gi
+1
+tmp=/tmp
+artifacts=/var/artifacts
+ARTIFACT_STORE=pvc
+ARTIFACT_DIR=/var/artifacts
+ARTIFACT_RETENTION_DAYS=14
+ARTIFACT_MAX_BYTES=20000000
+```
+
+`artifacts` claim'i `Pending` kalırsa `oc get sc` ile varsayılan sınıfı görün ve kurulumu `--set artifacts.storageClass=SINIF` ile tekrarlayın. Kontrol düzlemi tek replikadır. Bu disk `ReadWriteOnce` olduğu için ikinci replika bağlanamaz. Chart, `artifacts.store=pvc` iken `controlPlane.replicas` 1'den büyükse kurulumu reddeder.
 
 Postgres ilk açılışta `Running` olup `READY 0/1` kalabilir. `oc logs deploy/postgres -n agent-runtime` içinde `database system is ready` geçmeli. Kontrol düzlemi hazır olunca:
 
@@ -130,7 +149,7 @@ curl -sk "https://${ROUTE}/backend/api/health"
 Beklenen gövde:
 
 ```json
-{"ok":true,"llm_mode":"fake","run_backend":"kubernetes"}
+{"ok":true,"llm_mode":"fake","run_backend":"kubernetes","artifact_store":"pvc"}
 ```
 
 Tarayıcıda `https://${ROUTE}` açılır. Pano, `postgres-sales` ve `gunluk-satis-ozeti` görünür. Sertifika uyarısı CRC'nin varsayılan sertifikasındandır.
@@ -184,7 +203,41 @@ oc set env pod/"$(oc get pod -n agent-runs -l job-name="$JOB" -o jsonpath='{.ite
 
 Beklenen son satır: `executor ortamında sır yok`.
 
+Run podu artefakt PVC'sini bağlamaz. Yalnızca iki geçici disk vardır:
+
+```bash
+POD="$(oc get pod -n agent-runs -l job-name="$JOB" -o jsonpath='{.items[0].metadata.name}')"
+oc get pod "$POD" -n agent-runs -o jsonpath='{range .spec.volumes[*]}{.name}={.emptyDir.sizeLimit}{"\n"}{end}'
+oc get pod "$POD" -n agent-runs -o json | python3 -c 'import json,sys; vols=json.load(sys.stdin)["spec"]["volumes"]; assert all("persistentVolumeClaim" not in v for v in vols); print("run podunda PVC yok")'
+```
+
+Beklenen:
+
+```text
+work=20Gi
+tmp=2Gi
+run podunda PVC yok
+```
+
 Koşum bitince API durumu `succeeded` olur. Sahte modelle toplam ve Doğu Anadolu sapması gelir. `needs_review` görürseniz `oc logs job/"$JOB" -n agent-runs -c harness` çıktısını saklayın.
+
+Rapor kontrol düzleminden iner.
+
+```bash
+RUN="$(curl -sf http://127.0.0.1:8841/api/agents/"$AGENT"/runs | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+ART="$(curl -sf http://127.0.0.1:8841/api/runs/"$RUN" | python3 -c 'import json,sys; arts=json.load(sys.stdin)["artifacts"]; print(next(a["id"] for a in arts if a["name"]=="report.md"))')"
+curl -sfD - "http://127.0.0.1:8841/api/runs/${RUN}/artifacts/${ART}" -o /tmp/report.md
+```
+
+Beklenen başlıklarda `HTTP/1.1 200` ve `content-disposition` içinde `report.md`. Gövde metninde `Doğu Anadolu` geçer. `/tmp/report.md` boş değildir.
+
+Dosya kontrol düzlemi podunun PVC'sindedir:
+
+```bash
+oc exec -n agent-runtime deploy/control-plane -- ls /var/artifacts/runs/gunluk-satis-ozeti
+```
+
+Beklenen: koşum kimliğiyle bir dizin. Run podunda bakılacak yer geçici `/work` diskidir. Kalıcı kopya kontrol düzleminde durur.
 
 Job bittikten yaklaşık on dakika sonra `ttlSecondsAfterFinished` podu siler. Bu bir hata değildir.
 
@@ -210,3 +263,5 @@ CIDR'yi kendi ağ geçidinizle değiştirin. `deploy/openshift/egressfirewall.ex
 | Postgres `CreateContainerConfigError` | Secret `agent-runtime-env` içinde `POSTGRESQL_PASSWORD` var mı |
 | Koşum `failed` ve logda `SQL reddedildi` | AgentSpec tabloları `allowTables` ile uyuşmuyor |
 | Arayüz açılıyor, veri gelmiyor | UI podunda `CONTROL_PLANE_URL=http://control-plane.agent-runtime.svc:8841` |
+| PVC `Pending` | `oc describe pvc artifacts -n agent-runtime`. Varsayılan sınıf yoksa `artifacts.storageClass` verin |
+| Koşum `succeeded`, indirme 404 | `oc exec -n agent-runtime deploy/control-plane -- ls /var/artifacts`. `ARTIFACT_STORE=pvc` ve disk bağlı mı |

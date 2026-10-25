@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import os
 import sys
@@ -35,13 +34,23 @@ class ControlClient:
         self.http.post(f"{self.base}/api/internal/runs/{self.run_id}/steps", json=item).raise_for_status()
 
     def artifact(self, name: str, media_type: str, data: bytes) -> None:
-        payload = {
-            "name": name,
-            "media_type": media_type,
-            "sha256": hashlib.sha256(data).hexdigest(),
-            "b64": base64.b64encode(data).decode("ascii"),
-        }
-        response = self.http.post(f"{self.base}/api/internal/runs/{self.run_id}/artifacts", json=payload)
+        digest = hashlib.sha256(data).hexdigest()
+
+        def chunks():
+            view = memoryview(data)
+            step = 64 * 1024
+            for start in range(0, len(view), step):
+                yield bytes(view[start : start + step])
+
+        response = self.http.post(
+            f"{self.base}/api/internal/runs/{self.run_id}/artifacts",
+            content=chunks(),
+            headers={
+                "Content-Type": media_type,
+                "X-Artifact-Name": name,
+                "X-Artifact-Sha256": digest,
+            },
+        )
         response.raise_for_status()
 
     def invoke_tool(self, name: str, arguments: dict) -> dict:
@@ -94,7 +103,7 @@ def _bindings(context: dict) -> list[SourceBinding]:
     return bindings
 
 
-def _upload(client: ControlClient, work: Path, log) -> None:
+def _upload(client: ControlClient, work: Path, log, max_bytes: int) -> None:
     named = {
         "plan.json": "application/json",
         "analysis.py": "text/x-python",
@@ -109,7 +118,7 @@ def _upload(client: ControlClient, work: Path, log) -> None:
         if not path.exists():
             continue
         data = path.read_bytes()
-        if len(data) > MAX_ARTIFACT_BYTES:
+        if len(data) > max_bytes:
             note = (
                 f"{name} {len(data)} bayt olduğu için kontrol düzlemine yüklenmedi. "
                 f"sha256={hashlib.sha256(data).hexdigest()}"
@@ -190,7 +199,7 @@ def main() -> None:
                 outcome.summary["schedule_next"] = decision
             except Exception as exc:  # noqa: BLE001
                 outcome.summary["schedule_error"] = str(exc)
-        _upload(client, work, log)
+        _upload(client, work, log, int(settings.artifact_max_bytes or MAX_ARTIFACT_BYTES))
         client.complete(outcome)
         log.info("run finished", extra={"run_id": args.run_id, "step": outcome.status})
     except Exception as exc:  # noqa: BLE001

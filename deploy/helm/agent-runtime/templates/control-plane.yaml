@@ -1,3 +1,6 @@
+{{- if and (eq .Values.artifacts.store "pvc") (gt (int .Values.controlPlane.replicas) 1) }}
+{{- fail "artifacts.store=pvc ReadWriteOnce kullanır; controlPlane.replicas 1 kalmalı. Ölçek için artifacts.store=s3 veya ReadWriteMany disk gerekir." }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -99,10 +102,14 @@ spec:
               value: {{ .Values.schedulerEnabled | quote }}
             - name: SCHEDULER_INTERVAL_SECONDS
               value: {{ .Values.schedulerIntervalSeconds | quote }}
-            - name: ARTIFACT_BACKEND
-              value: {{ .Values.artifacts.backend | quote }}
+            - name: ARTIFACT_STORE
+              value: {{ .Values.artifacts.store | quote }}
             - name: ARTIFACT_DIR
               value: {{ .Values.artifacts.dir | quote }}
+            - name: ARTIFACT_RETENTION_DAYS
+              value: {{ .Values.artifacts.retentionDays | quote }}
+            - name: ARTIFACT_MAX_BYTES
+              value: {{ printf "%d" (int .Values.artifacts.maxBytes) | quote }}
             - name: WORK_ROOT
               value: /tmp/work
             - name: LOG_DIR
@@ -183,14 +190,19 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if eq .Values.artifacts.store "pvc" }}
             - name: artifacts
-              mountPath: /var/artifacts
+              mountPath: {{ .Values.artifacts.dir }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if eq .Values.artifacts.store "pvc" }}
         - name: artifacts
           persistentVolumeClaim:
             claimName: artifacts
+        {{- end }}
+{{- if eq .Values.artifacts.store "pvc" }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -199,6 +211,10 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   accessModes: ["ReadWriteOnce"]
+  {{- if .Values.artifacts.storageClass }}
+  storageClassName: {{ .Values.artifacts.storageClass | quote }}
+  {{- end }}
   resources:
     requests:
-      storage: {{ .Values.artifacts.persistence }}
+      storage: {{ .Values.artifacts.size }}
+{{- end }}
