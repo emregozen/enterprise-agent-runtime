@@ -57,6 +57,11 @@ spec:
     - to:
         - ipBlock:
             cidr: {{ .cidr }}
+            {{- $except := index . "except" | default list }}
+            {{- if $except }}
+            except:
+              {{- toYaml $except | nindent 14 }}
+            {{- end }}
       ports:
         - protocol: TCP
           port: {{ .port }}

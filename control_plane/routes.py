@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -40,17 +40,44 @@ class DatasourceIn(BaseModel):
     name: str
     dialect: str
     description: str = ""
-    dsn_env: str
+    dsn_env: str = ""
     allow_tables: list[str] = Field(min_length=1)
     sensitivity: str = "internal"
     k8s_secret_name: str | None = None
     k8s_secret_key: str | None = None
+    host: str = ""
+    port: int | None = None
+    database_name: str = ""
+    username: str = ""
+    password: str | None = None
+    options: dict = Field(default_factory=dict)
+    read_only: bool = True
+    enabled: bool = True
+
+
+class DatasourceUpdate(BaseModel):
+    dialect: str | None = None
+    description: str | None = None
+    dsn_env: str | None = None
+    allow_tables: list[str] | None = None
+    sensitivity: str | None = None
+    k8s_secret_name: str | None = None
+    k8s_secret_key: str | None = None
+    host: str | None = None
+    port: int | None = None
+    database_name: str | None = None
+    username: str | None = None
+    password: str | None = None
+    options: dict | None = None
+    read_only: bool | None = None
+    enabled: bool | None = None
 
 
 class DraftIn(BaseModel):
     description: str = Field(min_length=8)
     owner: str = "ekip"
     datasource_refs: list[str] = Field(min_length=1)
+    model_ref: str | None = None
 
 
 class AgentIn(BaseModel):
@@ -58,8 +85,47 @@ class AgentIn(BaseModel):
     publish: bool = True
 
 
+class AgentPatch(BaseModel):
+    description: str | None = None
+    owner: str | None = None
+    spec: dict | None = None
+    publish: bool = True
+
+
 class RunIn(BaseModel):
     dry_run: bool = False
+
+
+class BulkDeleteIn(BaseModel):
+    older_than_days: int = Field(ge=1, default=30)
+    statuses: list[str] = Field(default_factory=lambda: ["succeeded", "failed", "cancelled", "needs_review"])
+
+
+class LlmIn(BaseModel):
+    name: str
+    base_url: str
+    model: str
+    api_key: str | None = None
+    k8s_secret_name: str | None = None
+    k8s_secret_key: str | None = "api_key"
+    temperature: float | None = None
+    reasoning_effort: str = ""
+    extra_params: dict = Field(default_factory=dict)
+    is_default: bool = False
+    enabled: bool = True
+
+
+class LlmPatch(BaseModel):
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    k8s_secret_name: str | None = None
+    k8s_secret_key: str | None = None
+    temperature: float | None = None
+    reasoning_effort: str | None = None
+    extra_params: dict | None = None
+    is_default: bool | None = None
+    enabled: bool | None = None
 
 
 class PauseIn(BaseModel):
@@ -131,36 +197,33 @@ def health(db: Session = Depends(get_db)):
 
 @public.get("/datasources")
 def list_datasources(db: Session = Depends(get_db)):
+    from control_plane.catalog import datasource_out
+
     rows = db.query(DataSourceRecord).order_by(DataSourceRecord.name).all()
-    return [_ds_out(row) for row in rows]
+    return [datasource_out(row) for row in rows]
 
 
 @public.post("/datasources", status_code=201)
 def create_datasource(body: DatasourceIn, db: Session = Depends(get_db)):
-    if body.sensitivity not in {"internal", "restricted"}:
-        raise HTTPException(400, "sensitivity internal veya restricted olmalı")
-    if body.dialect not in {"postgres", "postgresql", "oracle", "ansi"}:
-        raise HTTPException(400, "dialect postgres, oracle veya ansi olmalı")
+    from control_plane.catalog import apply_datasource, datasource_out
+
     if db.query(DataSourceRecord).filter(DataSourceRecord.name == body.name).first():
         raise HTTPException(409, "bu ada sahip bir veri kaynağı var")
-    row = DataSourceRecord(
-        name=body.name,
-        dialect="postgres" if body.dialect == "postgresql" else body.dialect,
-        description=body.description,
-        dsn_env=body.dsn_env,
-        allow_tables=body.allow_tables,
-        sensitivity=body.sensitivity,
-        k8s_secret_name=body.k8s_secret_name,
-        k8s_secret_key=body.k8s_secret_key,
-    )
+    row = DataSourceRecord(name=body.name, dialect="postgres", dsn_env="DS_PENDING", allow_tables=body.allow_tables)
+    try:
+        apply_datasource(row, body, creating=True)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
     db.commit()
-    return _ds_out(row)
+    return datasource_out(row)
 
 
 @public.post("/datasources/{name}/introspect")
 def introspect(name: str, db: Session = Depends(get_db)):
-    row = db.query(DataSourceRecord).filter(DataSourceRecord.name == name).one_or_none()
+    from control_plane.catalog import find_datasource
+
+    row = find_datasource(db, name)
     if row is None:
         raise HTTPException(404, "veri kaynağı yok")
     return {"catalog": _live_catalog(row)}
@@ -168,11 +231,13 @@ def introspect(name: str, db: Session = Depends(get_db)):
 
 @public.post("/builder/draft")
 def draft(body: DraftIn, db: Session = Depends(get_db)):
+    from control_plane.catalog import find_datasource
+
     settings = get_settings()
     sources = []
     for name in body.datasource_refs:
-        row = db.query(DataSourceRecord).filter(DataSourceRecord.name == name, DataSourceRecord.enabled.is_(True)).one_or_none()
-        if row is None:
+        row = find_datasource(db, name)
+        if row is None or not row.enabled:
             raise HTTPException(404, f"veri kaynağı yok: {name}")
         sources.append(
             {
@@ -183,22 +248,42 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
                 "catalog": _live_catalog(row),
             }
         )
-    llm = make_llm(settings, "local-default")
-    try:
-        raw = parse_json_response(llm.complete(builder_messages({
-            "description": body.description,
-            "owner": body.owner,
-            "datasources": sources,
-        })))
-        spec = AgentSpec.model_validate(raw).canonical()
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(422, f"taslak üretilemedi: {exc}") from exc
+    from control_plane.catalog import persist_llm_calls, resolve_llm
+
+    payload = {
+        "description": body.description,
+        "owner": body.owner,
+        "datasources": sources,
+        "agentspec_schema": AgentSpec.model_json_schema(),
+    }
+    resolved = resolve_llm(db, settings, body.model_ref or "local-default")
+    llm = make_llm(settings, resolved.get("name") or "local-default", provider=resolved)
+    spec = None
+    last_error: Exception | None = None
+    for _ in range(2):
+        try:
+            raw = parse_json_response(llm.complete(builder_messages(payload)))
+            spec = AgentSpec.model_validate(raw).canonical()
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            payload = {**payload, "validation_error": str(exc)[:2000]}
+    persist_llm_calls(db, None, getattr(llm, "calls", []), "builder")
+    db.commit()
+    if spec is None:
+        raise HTTPException(422, f"taslak üretilemedi: {last_error}")
+    if body.model_ref and not any(item["sensitivity"] == "restricted" for item in sources):
+        spec["spec"]["model"]["class"] = body.model_ref
+        spec = AgentSpec.model_validate(spec).canonical()
     return {"spec": spec, "summary": spec_summary(spec)}
 
 
 @public.get("/agents")
-def list_agents(db: Session = Depends(get_db)):
-    rows = db.query(Agent).order_by(Agent.created_at.desc()).all()
+def list_agents(include_deleted: bool = False, db: Session = Depends(get_db)):
+    query = db.query(Agent).order_by(Agent.created_at.desc())
+    if not include_deleted:
+        query = query.filter(Agent.status != "deleted")
+    rows = query.all()
     payload = []
     for agent in rows:
         schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
@@ -266,13 +351,25 @@ def post_run(agent_id: uuid.UUID, body: RunIn, db: Session = Depends(get_db)):
 
 
 @public.get("/runs")
-def list_runs(agent_id: uuid.UUID | None = None, status: str | None = None, limit: int = 50, db: Session = Depends(get_db)):
+def list_runs(
+    response: Response,
+    agent_id: uuid.UUID | None = None,
+    status: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
     query = db.query(Run).order_by(Run.created_at.desc())
     if agent_id:
         query = query.filter(Run.agent_id == agent_id)
     if status:
         query = query.filter(Run.status == status)
-    return [run_out(row) for row in query.limit(min(limit, 200)).all()]
+    if q:
+        query = query.filter(Run.agent_name.ilike(f"%{q}%"))
+    total = query.count()
+    response.headers["X-Total-Count"] = str(total)
+    return [run_out(row) for row in query.offset(max(offset, 0)).limit(min(limit, 200)).all()]
 
 
 @public.get("/runs/{run_id}")
@@ -487,23 +584,19 @@ def post_complete(run_id: uuid.UUID, body: CompleteIn, authorization: str | None
 
 
 def _ds_out(row: DataSourceRecord) -> dict:
-    return {
-        "id": str(row.id),
-        "name": row.name,
-        "dialect": row.dialect,
-        "description": row.description,
-        "dsn_env": row.dsn_env,
-        "allow_tables": row.allow_tables,
-        "sensitivity": row.sensitivity,
-        "enabled": row.enabled,
-        "k8s_secret_name": row.k8s_secret_name,
-        "configured": bool(os.environ.get(row.dsn_env)) or bool(row.k8s_secret_name),
-    }
+    from control_plane.catalog import datasource_out
+
+    return datasource_out(row)
 
 
 def _live_catalog(row: DataSourceRecord) -> dict:
+    from control_plane.catalog import datasource_dsn
+
     settings = get_settings()
-    dsn = os.environ.get(row.dsn_env, "")
+    try:
+        dsn = datasource_dsn(row, require=True)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     if not dsn:
         raise HTTPException(500, f"{row.dsn_env} tanımlı değil")
     source = open_source(
@@ -519,4 +612,246 @@ def _live_catalog(row: DataSourceRecord) -> dict:
         raise HTTPException(502, f"şema okunamadı: {exc}") from exc
     finally:
         source.close()
+
+
+def _source_or_404(db: Session, datasource_id: uuid.UUID) -> DataSourceRecord:
+    row = db.get(DataSourceRecord, datasource_id)
+    if row is None:
+        raise HTTPException(404, "veri kaynağı yok")
+    return row
+
+
+@public.get("/datasources/{datasource_id}")
+def get_datasource(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    return _ds_out(_source_or_404(db, datasource_id))
+
+
+@public.patch("/datasources/{datasource_id}")
+def patch_datasource(datasource_id: uuid.UUID, body: DatasourceUpdate, db: Session = Depends(get_db)):
+    from control_plane.catalog import apply_datasource
+
+    row = _source_or_404(db, datasource_id)
+    merged = DatasourceIn(
+        name=row.name,
+        dialect=body.dialect or row.dialect,
+        description=row.description if body.description is None else body.description,
+        dsn_env=row.dsn_env if body.dsn_env is None else body.dsn_env,
+        allow_tables=row.allow_tables if body.allow_tables is None else body.allow_tables,
+        sensitivity=body.sensitivity or row.sensitivity,
+        k8s_secret_name=row.k8s_secret_name if body.k8s_secret_name is None else body.k8s_secret_name,
+        k8s_secret_key=row.k8s_secret_key if body.k8s_secret_key is None else body.k8s_secret_key,
+        host=row.host if body.host is None else body.host,
+        port=row.port if body.port is None else body.port,
+        database_name=row.database_name if body.database_name is None else body.database_name,
+        username=row.username if body.username is None else body.username,
+        password=body.password,
+        options=row.options if body.options is None else body.options,
+        read_only=row.read_only if body.read_only is None else body.read_only,
+        enabled=row.enabled if body.enabled is None else body.enabled,
+    )
+    try:
+        apply_datasource(row, merged, creating=False)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    db.commit()
+    return _ds_out(row)
+
+
+@public.delete("/datasources/{datasource_id}", status_code=204)
+def delete_datasource(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    row = _source_or_404(db, datasource_id)
+    db.delete(row)
+    db.commit()
+
+
+@public.post("/datasources/{datasource_id}/test")
+def test_datasource_route(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import test_datasource
+
+    try:
+        return test_datasource(_source_or_404(db, datasource_id))
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@public.get("/llm/providers")
+def list_providers(db: Session = Depends(get_db)):
+    from control_plane.catalog import provider_out
+    from control_plane.models import LlmProvider
+
+    rows = db.query(LlmProvider).order_by(LlmProvider.name).all()
+    return [provider_out(row) for row in rows]
+
+
+@public.post("/llm/providers", status_code=201)
+def create_provider(body: LlmIn, db: Session = Depends(get_db)):
+    from control_plane.catalog import apply_provider, provider_out
+    from control_plane.models import LlmProvider
+
+    if db.query(LlmProvider).filter(LlmProvider.name == body.name).first():
+        raise HTTPException(409, "bu ada sahip bir model var")
+    row = LlmProvider(name=body.name, base_url=body.base_url, model=body.model)
+    apply_provider(db, row, body, creating=True)
+    db.add(row)
+    db.commit()
+    return provider_out(row)
+
+
+@public.patch("/llm/providers/{provider_id}")
+def patch_provider(provider_id: uuid.UUID, body: LlmPatch, db: Session = Depends(get_db)):
+    from control_plane.catalog import apply_provider, provider_out
+    from control_plane.models import LlmProvider
+
+    row = db.get(LlmProvider, provider_id)
+    if row is None:
+        raise HTTPException(404, "model yok")
+    merged = LlmIn(
+        name=row.name,
+        base_url=body.base_url or row.base_url,
+        model=body.model or row.model,
+        api_key=body.api_key,
+        k8s_secret_name=row.k8s_secret_name if body.k8s_secret_name is None else body.k8s_secret_name,
+        k8s_secret_key=body.k8s_secret_key or row.k8s_secret_key,
+        temperature=row.temperature if body.temperature is None else body.temperature,
+        reasoning_effort=row.reasoning_effort if body.reasoning_effort is None else body.reasoning_effort,
+        extra_params=row.extra_params if body.extra_params is None else body.extra_params,
+        is_default=row.is_default if body.is_default is None else body.is_default,
+        enabled=row.enabled if body.enabled is None else body.enabled,
+    )
+    apply_provider(db, row, merged, creating=False)
+    db.commit()
+    return provider_out(row)
+
+
+@public.delete("/llm/providers/{provider_id}", status_code=204)
+def delete_provider(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.models import LlmProvider
+
+    row = db.get(LlmProvider, provider_id)
+    if row is None:
+        raise HTTPException(404, "model yok")
+    db.delete(row)
+    db.commit()
+
+
+@public.post("/llm/providers/{provider_id}/test")
+def test_provider_route(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import test_provider
+    from control_plane.models import LlmProvider
+
+    row = db.get(LlmProvider, provider_id)
+    if row is None:
+        raise HTTPException(404, "model yok")
+    try:
+        return test_provider(row, get_settings())
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@public.get("/dashboard")
+def get_dashboard(days: int = 14, db: Session = Depends(get_db)):
+    from control_plane.catalog import dashboard
+
+    return dashboard(db, days)
+
+
+@public.get("/settings")
+def get_public_settings():
+    from control_plane.catalog import public_settings
+
+    return public_settings(get_settings())
+
+
+@public.patch("/agents/{agent_id}")
+def patch_agent(agent_id: uuid.UUID, body: AgentPatch, db: Session = Depends(get_db)):
+    agent = _agent_or_404(db, agent_id)
+    if agent.status == "deleted":
+        raise HTTPException(409, "silinmiş ajan düzenlenemez")
+    if body.description is not None:
+        agent.description = body.description
+    if body.owner is not None:
+        agent.owner = body.owner
+    if body.spec is None:
+        db.commit()
+        schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
+        return agent_out(agent, schedule)
+    try:
+        row = add_version(db, agent, body.spec, publish=body.publish, actor="ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return {"version": row.version, "status": row.status, "spec": row.spec}
+
+
+@public.post("/agents/{agent_id}/duplicate", status_code=201)
+def post_duplicate(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import duplicate_agent
+
+    agent = _agent_or_404(db, agent_id)
+    try:
+        created = duplicate_agent(db, agent, "ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    schedule = db.query(Schedule).filter(Schedule.agent_id == created.id).one_or_none()
+    return agent_out(created, schedule)
+
+
+@public.delete("/agents/{agent_id}", status_code=204)
+def delete_agent_route(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import delete_agent
+
+    delete_agent(db, _agent_or_404(db, agent_id), "ui")
+
+
+@public.get("/agents/{agent_id}/diff")
+def agent_diff(agent_id: uuid.UUID, left: int, right: int, db: Session = Depends(get_db)):
+    from control_plane.catalog import spec_diff
+
+    try:
+        text = spec_diff(db, _agent_or_404(db, agent_id), left, right)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return {"diff": text}
+
+
+@public.post("/runs/bulk-delete")
+def post_bulk_delete(body: BulkDeleteIn, db: Session = Depends(get_db)):
+    from control_plane.catalog import bulk_delete_runs
+
+    try:
+        removed = bulk_delete_runs(db, older_than_days=body.older_than_days, statuses=body.statuses, actor="ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return {"deleted": removed}
+
+
+@public.post("/runs/{run_id}/cancel")
+def post_cancel(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import cancel_run
+
+    try:
+        run = cancel_run(db, _run_or_404(db, run_id), "ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return run_out(run)
+
+
+@public.post("/runs/{run_id}/rerun", status_code=202)
+def post_rerun(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import rerun
+
+    try:
+        run, _token = rerun(db, _run_or_404(db, run_id), "ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    return run_out(run)
+
+
+@public.delete("/runs/{run_id}", status_code=204)
+def delete_run_route(run_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.catalog import delete_run
+
+    try:
+        delete_run(db, _run_or_404(db, run_id), "ui")
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
 

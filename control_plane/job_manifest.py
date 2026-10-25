@@ -45,6 +45,7 @@ def build_run_manifests(
     datasources: list[dict],
     settings,
     llm_api_key: str = "",
+    llm: dict | None = None,
 ) -> tuple[dict, dict]:
     short = run_id.hex[:12]
     job_name = f"run-{short}"
@@ -55,7 +56,9 @@ def build_run_manifests(
     cpu = str(runtime.get("cpu") or "1")
     memory = str(runtime.get("memory") or "2Gi")
     image = settings.runtime_image_ref(runtime.get("image"))
-    resolved = settings.resolve_model((body.get("model") or {}).get("class") or "local-default")
+    resolved = llm or settings.resolve_model((body.get("model") or {}).get("class") or "local-default")
+    if llm_api_key and not resolved.get("api_key"):
+        resolved = {**resolved, "api_key": llm_api_key}
     string_data = {"RUN_TOKEN": token}
     env = [
         {"name": "RUN_ID", "value": str(run_id)},
@@ -65,6 +68,7 @@ def build_run_manifests(
         {"name": "LLM_MODE", "value": settings.llm_mode},
         {"name": "LLM_BASE_URL", "value": resolved["base_url"]},
         {"name": "LLM_MODEL", "value": resolved["model"]},
+        {"name": "LLM_TEMPERATURE", "value": str(resolved.get("temperature") if resolved.get("temperature") is not None else 0)},
         {"name": "HOME", "value": "/tmp"},
         {"name": "TMPDIR", "value": "/tmp"},
         {"name": "PYTHONDONTWRITEBYTECODE", "value": "1"},
@@ -98,21 +102,20 @@ def build_run_manifests(
                     "valueFrom": {"secretKeyRef": {"name": secret_name, "key": env_name}},
                 }
             )
+    if resolved.get("reasoning_effort"):
+        env.append({"name": "LLM_REASONING_EFFORT", "value": str(resolved["reasoning_effort"])})
     if settings.llm_mode == "openai":
-        if settings.llm_k8s_secret_name:
+        secret_ref = resolved.get("k8s_secret_name") or settings.llm_k8s_secret_name
+        secret_key = resolved.get("k8s_secret_key") or settings.llm_k8s_secret_key
+        if secret_ref:
             env.append(
                 {
                     "name": "LLM_API_KEY",
-                    "valueFrom": {
-                        "secretKeyRef": {
-                            "name": settings.llm_k8s_secret_name,
-                            "key": settings.llm_k8s_secret_key,
-                        }
-                    },
+                    "valueFrom": {"secretKeyRef": {"name": secret_ref, "key": secret_key or "api_key"}},
                 }
             )
         else:
-            string_data["LLM_API_KEY"] = llm_api_key
+            string_data["LLM_API_KEY"] = resolved.get("api_key") or llm_api_key
             env.append(
                 {
                     "name": "LLM_API_KEY",

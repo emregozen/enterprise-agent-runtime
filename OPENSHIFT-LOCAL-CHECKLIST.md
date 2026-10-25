@@ -4,6 +4,31 @@ Yarın CRC üzerinde kurulumu bu sırayla doğrulayın. Komutlar `kubeadmin` iç
 
 Ayrıntılı kurulum kök `README.md` içindedir. Bu dosya yalnızca doğrulamadır.
 
+## 0. Kurulu kümeyi yükseltme
+
+`6adb025` veya `be4709e` zaten duruyorsa imajları yeniden derleyip chart’ı yükseltin. Yayın ad alanı chart’ta yazılmaz. `agent-runtime-master-key` Secret’ını silmeyin; yoksa şifreli parolalar okunamaz.
+
+```bash
+oc get ns agent-runtime >/dev/null 2>&1 || oc new-project agent-runtime
+oc get ns agent-runs >/dev/null 2>&1 || oc create namespace agent-runs
+# Anahtar dosyası repoda yoktur. DeepSeek anahtarı her iki ad alanında da llm-deepseek / api_key olmalıdır.
+# oc -n agent-runtime create secret generic llm-deepseek --from-file=api_key=./api_key
+# oc -n agent-runs create secret generic llm-deepseek --from-file=api_key=./api_key
+oc start-build agent-runtime-py312 --from-dir=. --follow -n agent-runtime
+oc start-build agent-runtime-ui --from-dir=ui --follow -n agent-runtime
+helm upgrade --install agent-runtime deploy/helm/agent-runtime \
+  --namespace agent-runtime --create-namespace \
+  -f deploy/helm/agent-runtime/values-crc.yaml \
+  -f deploy/helm/agent-runtime/values-crc-small.yaml \
+  -f deploy/helm/agent-runtime/values-crc-deepseek.yaml
+oc get secret agent-runtime-master-key -n agent-runtime
+oc get deploy control-plane -n agent-runtime -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LLM_K8S_SECRET_NAME")].value}{"\n"}'
+```
+
+Beklenen: master-key Secret’ı `key` alanını taşır. Son satır `llm-deepseek` olur. Kontrol düzlemi ilk açılışta bu Secret’ı veritabanına bir model olarak tohumlar; anahtarın kendisini satıra kopyalamaz, koşum aynı Secret adını kullanır. Arayüz kabı artık Next önbelleği tutmaz; statik dosyayı küçük bir süreç sunar. İstek `values-crc-small.yaml` içindeki düşük değerdir.
+
+DeepSeek dosyasını eklemezseniz model kipi `fake` kalır. Çıkış kuralı `values-crc-deepseek.yaml` içindedir: genel `443`, özel aralıklar hariç. Üretimde bu kuralı EgressFirewall veya çıkış vekiliyle değiştirin.
+
 ## 1. Küme ayakta
 
 ```bash

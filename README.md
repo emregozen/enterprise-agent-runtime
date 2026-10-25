@@ -4,6 +4,18 @@ Kurum içi ajanları doğal dille tarif edip sürümlü bir **AgentSpec** olarak
 
 Kimlik doğrulama, SSO ve çoklu kiracı bu turda yoktur.
 
+## Ne değişti
+
+Ajan, veri kaynağı ve model artık arayüzden yönetilir. Postgres veya Oracle bağlantısı, OpenAI uyumlu model adresi ve API anahtarı ekrandan yazılır; parola ve anahtar veritabanında şifreli durur, API bunları geri vermez. Ortam değişkeni ve Helm `llm.existingSecret` yalnızca ilk açılışta bir model tohumlar. Asıl kayıt veritabanındadır.
+
+Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir. Ajan durdurulabilir, kopyalanabilir veya gizlenerek silinebilir; geçmiş koşumlar kalır. Koşum iptal, yeniden çalıştırma ve silme (artefaktıyla birlikte) arayüzdedir. İptal edilen ve hiç başlamadan düşen koşum günlük kotaya yazılmaz.
+
+Rapor tablosundaki sapma yüzdeleri aynı biçimde yazılır (`0,00%` ve `300,00%`). Model çağrısı gecikme ve jeton sayısını günlüğe yazar. Akıl yürütme (`reasoning_effort`) isteğe bağlıdır ve varsayılan kapalıdır.
+
+Arayüz sol menülü bir yönetim konsoludur. Açık ve koyu tema vardır. Yazı tipleri ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
+
+Çıkış ağı sessizce açılmaz. Koşum podu DNS, kontrol düzlemi, Postgres ve chart’taki `extraEgress` listesi dışında çıkamaz. Ağ politikası DNS adı seçemediği için DeepSeek denemesinde `0.0.0.0/0:443` kullanılır ve özel aralıklar `except` ile kesilir. Kurumsal kurulumda bunun yerine EgressFirewall veya bir çıkış vekili gerekir.
+
 ## Ne yapar
 
 1. Çalışan, veri kaynağını ve cümleyi seçer. Builder, şemayı okuyup bir AgentSpec taslağı üretir. Ham satır modele gitmez.

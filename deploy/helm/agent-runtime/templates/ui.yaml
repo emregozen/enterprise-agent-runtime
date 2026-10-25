@@ -69,12 +69,8 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
-            - name: next-cache
-              mountPath: /app/.next/cache
       volumes:
         - name: tmp
-          emptyDir: {}
-        - name: next-cache
           emptyDir: {}
 {{- if .Values.route.enabled }}
 ---

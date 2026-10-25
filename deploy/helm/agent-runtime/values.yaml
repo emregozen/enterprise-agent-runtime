@@ -67,6 +67,13 @@ llm:
   baseUrl: http://127.0.0.1:11434/v1
   model: qwen2.5-coder:7b
   apiKey: ""
+  temperature: 0
+  # Empty keeps reasoning off. Set low, medium, or high only when the provider accepts it.
+  reasoningEffort: ""
+  # Use a pre-created Secret instead of apiKey. It must exist in both namespace and runNamespace.
+  existingSecret:
+    name: ""
+    key: api_key
   modelClasses: ""
 
 runBackend: kubernetes
@@ -111,3 +118,4 @@ networkPolicy:
   # - name: llm
   #   cidr: 10.20.0.0/24
   #   port: 443
+  #   except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

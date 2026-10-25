@@ -17,6 +17,19 @@ def format_number(value) -> str:
     return rendered.replace(",", " ").replace(".", ",").replace(" ", ".")
 
 
+def format_percent(value) -> str:
+    """Always two fractional digits so 0 and 300 render the same way."""
+    if value is None:
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    rendered = f"{number:,.2f}"
+    rendered = rendered.replace(",", " ").replace(".", ",").replace(" ", ".")
+    return f"{rendered}%"
+
+
 def render_report(template: str, output: dict) -> str:
     regions = output.get("regions") or []
     lines = [
@@ -25,11 +38,11 @@ def render_report(template: str, output: dict) -> str:
     ]
     for region in regions:
         lines.append(
-            "| {name} | {amount} | {base} | {dev}% | {count} |".format(
+            "| {name} | {amount} | {base} | {dev} | {count} |".format(
                 name=region.get("region") or "—",
                 amount=format_number(region.get("yesterday_amount")),
                 base=format_number(region.get("baseline_daily")),
-                dev=format_number(region.get("deviation_pct")),
+                dev=format_percent(region.get("deviation_pct")),
                 count=region.get("sale_count", 0),
             )
         )
@@ -42,7 +55,7 @@ def render_report(template: str, output: dict) -> str:
         for item in anomalies:
             direction = "yüksek" if item.get("direction") == "yuksek" else "düşük"
             bits.append(
-                f"- **{item.get('region')}**: %{format_number(item.get('deviation_pct'))} ({direction})"
+                f"- **{item.get('region')}**: {format_percent(item.get('deviation_pct'))} ({direction})"
             )
         anomaly_section = "\n".join(bits)
     values = {

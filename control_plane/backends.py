@@ -31,6 +31,9 @@ class RunBackend:
             return Path(run.log_path).read_text(encoding="utf-8", errors="replace")[-200_000:]
         return ""
 
+    def stop(self, run: Run) -> None:
+        return None
+
 
 @dataclass
 class _Proc:
@@ -92,7 +95,9 @@ class LocalBackend(RunBackend):
                 stdout=logf,
                 stderr=subprocess.STDOUT,
             )
-            resolved = settings.resolve_model((run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
+            from control_plane.catalog import resolve_llm
+
+            resolved = resolve_llm(db, settings, (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
             harness_env = dict(base_env)
             harness_env.update(
                 {
@@ -104,14 +109,17 @@ class LocalBackend(RunBackend):
                     "LLM_MODE": settings.llm_mode,
                     "LLM_BASE_URL": resolved["base_url"],
                     "LLM_MODEL": resolved["model"],
+                    "LLM_TEMPERATURE": str(resolved.get("temperature") if resolved.get("temperature") is not None else 0),
                     "OTEL_EXPORTER_OTLP_ENDPOINT": settings.otel_exporter_otlp_endpoint,
                     "OTEL_SERVICE_NAME": settings.otel_service_name,
                     "LOG_LEVEL": settings.log_level,
                     "HARNESS_FAULT_ROUNDS": os.environ.get("HARNESS_FAULT_ROUNDS", "0"),
                 }
             )
-            if settings.llm_mode == "openai":
-                harness_env["LLM_API_KEY"] = resolved["api_key"]
+            if resolved.get("reasoning_effort"):
+                harness_env["LLM_REASONING_EFFORT"] = str(resolved["reasoning_effort"])
+            if settings.llm_mode == "openai" and not resolved.get("k8s_secret_name"):
+                harness_env["LLM_API_KEY"] = resolved.get("api_key") or ""
             for source in sources:
                 harness_env[source["dsn_env"]] = source["dsn"]
             harness = subprocess.Popen(
@@ -172,6 +180,21 @@ class LocalBackend(RunBackend):
         finally:
             db.close()
 
+    def stop(self, run: Run) -> None:
+        proc = self.procs.pop(run.id, None)
+        if proc is None:
+            return
+        for child in (proc.harness, proc.executor):
+            if child.poll() is None:
+                child.terminate()
+        try:
+            proc.harness.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.harness.kill()
+        if proc.executor.poll() is None:
+            proc.executor.kill()
+        proc.logf.close()
+
 
 class KubernetesBackend(RunBackend):
     def __init__(self):
@@ -199,7 +222,10 @@ class KubernetesBackend(RunBackend):
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("koşum kaydı yok")
+            from control_plane.catalog import resolve_llm
+
             sources = materialize_sources(load_sources_for_spec(db, run.spec_snapshot))
+            resolved = resolve_llm(db, settings, (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
             secret, job = build_run_manifests(
                 run_id=run.id,
                 agent_name=run.agent_name,
@@ -208,7 +234,8 @@ class KubernetesBackend(RunBackend):
                 token=token,
                 datasources=sources,
                 settings=settings,
-                llm_api_key=settings.resolve_model((run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")["api_key"],
+                llm_api_key=resolved.get("api_key") or "",
+                llm=resolved,
             )
             utils.create_from_dict(self.api, secret, namespace=self.namespace)
             created = utils.create_from_dict(self.api, job, namespace=self.namespace)
@@ -285,6 +312,23 @@ class KubernetesBackend(RunBackend):
             except Exception as exc:  # noqa: BLE001
                 chunks.append(f"(log okunamadı: {exc})")
         return "\n".join(chunks)[-200_000:]
+
+    def stop(self, run: Run) -> None:
+        if not run.job_name:
+            return
+        from kubernetes.client.rest import ApiException
+
+        try:
+            self.batch.delete_namespaced_job(run.job_name, self.namespace, propagation_policy="Background")
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+        secret_name = f"{run.job_name}-env"
+        try:
+            self.core.delete_namespaced_secret(secret_name, self.namespace)
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
 
 
 class RecordingBackend(RunBackend):

@@ -58,6 +58,9 @@ def seed() -> None:
                 )
             )
             db.commit()
+        from control_plane.catalog import seed_llm_from_env
+
+        seed_llm_from_env(db, settings)
         if settings.seed_demo and db.query(Agent).count() == 0:
             if db.query(DataSourceRecord).filter(DataSourceRecord.name == "postgres-sales").one_or_none():
                 create_agent(db, EXAMPLE_SPEC, publish=True, actor="seed")

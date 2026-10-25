@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     llm_model: str = "local-default"
     llm_model_classes: str = ""
     llm_timeout_seconds: float = 120
+    llm_temperature: float = 0
+    llm_reasoning_effort: str = ""
+    config_master_key: str = ""
 
     run_backend: str = "local"
     control_plane_public_url: str = "http://127.0.0.1:8841"

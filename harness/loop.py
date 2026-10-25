@@ -31,6 +31,15 @@ output.json must contain grand_total (number), sale_count (integer), regions (li
 Python must compute numbers from the parquet file. Never hard-code totals from memory.
 SQL dialect is given in the user payload. PostgreSQL uses ::float8. Oracle uses CAST.
 If role is repair, fix the code or SQL using the error. Still do not invent numbers.
+Execution environment for "python": Python 3.12 standard library plus duckdb, polars and pyarrow.
+pandas and numpy are NOT installed; do not import them. There is no network access.
+WORKDIR is os.environ["WORKDIR"]. WORKDIR/input.parquet holds exactly the columns returned by your SQL
+(same aliases), so the code must only use column names that the SQL selects. params are in WORKDIR/params.json.
+output.json fields: yesterday (ISO date string), grand_total, sale_count,
+regions: [{"region", "yesterday_amount", "baseline_daily", "deviation_pct", "sale_count"}],
+anomalies: [{"region", "deviation_pct", "direction": "yuksek" or "dusuk"}]. Convert dates and decimals to str/float.
+Every cross_checks sql must return a single scalar that equals the value at json_path.
+If repair.previous is given, it is your previous plan; keep what worked and fix only the failing part.
 """
 
 BUILDER_SYSTEM = """You are the AgentSpec builder.
@@ -39,6 +48,15 @@ Use only the datasources listed in the user payload. Do not invent table names.
 model.class must be local-default when any datasource sensitivity is restricted.
 tools may include send_email, send_sms, http_request only when the description asks.
 schedule.mode is cron, self, hybrid, or manual. Use Europe/Istanbul.
+The JSON must follow agentspec_schema in the user payload exactly. Top-level keys are
+apiVersion, kind, metadata (name, version: 1, owner) and spec (goal, datasources, schedule, ...).
+Example skeleton:
+{"apiVersion": "agents.internal/v1", "kind": "AgentSpec",
+ "metadata": {"name": "gunluk-satis-ozeti", "version": 1, "owner": "ekip"},
+ "spec": {"goal": "...", "model": {"class": "local-default"},
+          "datasources": [{"ref": "postgres-sales", "allowTables": ["sales"]}],
+          "tools": [], "schedule": {"mode": "cron", "cron": "30 8 * * *", "timeZone": "Europe/Istanbul"}}}
+If the payload has validation_error, return a corrected full AgentSpec.
 """
 
 
@@ -170,10 +188,13 @@ def _execute_run(ctx: RunContext, settings, llm=None) -> RunOutcome:
         (work / "plan.json").write_text(json.dumps({k: v for k, v in plan.items() if k != "python"}, ensure_ascii=False, default=str), encoding="utf-8")
 
         outcome = _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work, steps)
+        _attach_llm_calls(outcome, llm)
         return outcome
     except Exception as exc:  # noqa: BLE001
         _step(steps, "crash", "failed", {"error": str(exc)})
-        return _finish(ctx, "failed", steps, error=str(exc), report="")
+        outcome = _finish(ctx, "failed", steps, error=str(exc), report="")
+        _attach_llm_calls(outcome, llm)
+        return outcome
     finally:
         executor.shutdown()
         executor.close()
@@ -193,7 +214,7 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
             _step(steps, "sql_guard", "failed", {"reason": last_reason, "attempt": attempt})
             if attempt == max_rounds:
                 return _finish(ctx, "needs_review", steps, reason=last_reason)
-            plan = _complete_plan(llm, _plan_payload(ctx, catalog, repair={"error": last_reason, "sql": sql}))
+            plan = _complete_plan(llm, _plan_payload(ctx, catalog, repair={"error": last_reason, "sql": sql, "previous": _previous(plan)}))
             continue
         _step(steps, "sql_guard", "succeeded", {"tables": guarded.tables, "aggregate": guarded.aggregate, "attempt": attempt})
         if fetched_sql != guarded.sql:
@@ -227,7 +248,17 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
                 return _finish(ctx, "needs_review", steps, reason=last_reason, extra={"stderr": executed.get("stderr")})
             plan = _complete_plan(
                 llm,
-                _plan_payload(ctx, catalog, repair={"error": last_reason, "stderr": (executed.get("stderr") or "")[:1500], "attempt": attempt}),
+                _plan_payload(
+                    ctx,
+                    catalog,
+                    repair={
+                        "error": last_reason,
+                        "stderr": (executed.get("stderr") or "")[:1500],
+                        "attempt": attempt,
+                        "input_parquet_columns": fetch.columns if fetch else None,
+                        "previous": _previous(plan),
+                    },
+                ),
             )
             continue
         output = executed.get("output") or {}
@@ -259,7 +290,10 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
                 "columns": fetch.columns if fetch else None,
                 "note": "bulk rows omitted",
             }
-        plan = _complete_plan(llm, _plan_payload(ctx, catalog, repair={"error": last_reason, "preview": repair_preview}))
+        plan = _complete_plan(
+            llm,
+            _plan_payload(ctx, catalog, repair={"error": last_reason, "preview": repair_preview, "previous": _previous(plan)}),
+        )
     return _finish(ctx, "needs_review", steps, reason=last_reason)
 
 
@@ -310,6 +344,22 @@ def _cross_check(ctx: RunContext, source, checks: list[dict], output: dict) -> l
         except Exception as exc:  # noqa: BLE001
             results.append({"name": name, "ok": False, "error": str(exc)})
     return results
+
+
+def _previous(plan: dict) -> dict:
+    """Previous plan for repair prompts. Code is model-written; row data stays out."""
+    return {
+        "sql": str(plan.get("sql") or "")[:4000],
+        "python": str(plan.get("python") or "")[:8000],
+        "cross_checks": plan.get("cross_checks"),
+    }
+
+
+def _attach_llm_calls(outcome, llm) -> None:
+    calls = list(getattr(llm, "calls", []) or [])
+    if not calls:
+        return
+    outcome.summary = {**(outcome.summary or {}), "llm_calls": calls}
 
 
 def _plan_payload(ctx: RunContext, catalog: dict, repair: dict | None) -> dict:

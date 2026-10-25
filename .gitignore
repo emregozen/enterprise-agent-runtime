@@ -9,6 +9,7 @@ build/
 var/
 ui/node_modules/
 ui/.next/
+ui/dist/
 ui/out/
 .coverage
 htmlcov/

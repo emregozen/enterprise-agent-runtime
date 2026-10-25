@@ -51,6 +51,10 @@ def init_db() -> None:
 
     engine = get_engine()
     Base.metadata.create_all(engine)
+    from control_plane.migrate import apply_migrations
+
+    with engine.begin() as conn:
+        apply_migrations(conn)
     with engine.begin() as conn:
         conn.execute(
             text(

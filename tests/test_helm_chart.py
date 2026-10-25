@@ -62,3 +62,24 @@ def test_small_values_lower_requests_and_s3_keeps_rolling_update():
     control = next(doc for doc in s3 if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "control-plane")
     assert "strategy" not in control["spec"] or control["spec"].get("strategy", {}).get("type") != "Recreate"
     assert not any(doc.get("kind") == "PersistentVolumeClaim" and doc["metadata"]["name"] == "artifacts" for doc in s3)
+
+
+def test_deepseek_values_use_existing_secret_and_private_exceptions():
+    docs = _render("-f", str(CHART / "values-crc-deepseek.yaml"))
+    deploy = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "control-plane")
+    env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+    key = next(item for item in env if item["name"] == "LLM_API_KEY")
+    assert key["valueFrom"]["secretKeyRef"]["name"] == "llm-deepseek"
+    assert key["valueFrom"]["secretKeyRef"]["key"] == "api_key"
+    names = {item["name"]: item.get("value") for item in env}
+    assert names["LLM_K8S_SECRET_NAME"] == "llm-deepseek"
+    assert names["LLM_REASONING_EFFORT"] == ""
+    policy = next(doc for doc in docs if doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"] == "agent-run-egress")
+    blocks = []
+    for rule in policy["spec"]["egress"]:
+        for target in rule.get("to") or []:
+            if "ipBlock" in target:
+                blocks.append(target["ipBlock"])
+    assert blocks[0]["cidr"] == "0.0.0.0/0"
+    assert "10.0.0.0/8" in blocks[0]["except"]
+    assert any(doc.get("kind") == "Secret" and doc["metadata"]["name"] == "agent-runtime-master-key" for doc in docs)

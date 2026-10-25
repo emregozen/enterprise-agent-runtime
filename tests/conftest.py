@@ -21,6 +21,7 @@ os.environ["EMAIL_API_URL"] = ""
 os.environ["EMAIL_API_TOKEN"] = "super-secret-mail-token"
 os.environ["CONTROL_PLANE_PUBLIC_URL"] = "http://127.0.0.1:8841"
 os.environ["CONTROL_PLANE_INTERNAL_URL"] = "http://127.0.0.1:8841"
+os.environ["CONFIG_MASTER_KEY"] = "test-master-key-agent-runtime-poc"
 
 from shared.config import get_settings
 
@@ -49,8 +50,8 @@ def db() -> Session:
     session = SessionLocal()
     session.execute(
         text(
-            "TRUNCATE audit_events, artifacts, tool_calls, run_steps, runs, schedules, "
-            "agent_versions, agents, datasources RESTART IDENTITY CASCADE"
+            "TRUNCATE audit_events, artifacts, tool_calls, run_steps, llm_calls, runs, schedules, "
+            "agent_versions, agents, llm_providers, datasources RESTART IDENTITY CASCADE"
         )
     )
     session.commit()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,7 +52,49 @@ class DataSourceRecord(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     k8s_secret_name: Mapped[str | None] = mapped_column(String(253), nullable=True)
     k8s_secret_key: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    host: Mapped[str] = mapped_column(String(255), default="")
+    port: Mapped[int] = mapped_column(Integer, default=5432)
+    database_name: Mapped[str] = mapped_column(String(128), default="")
+    username: Mapped[str] = mapped_column(String(128), default="")
+    password_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    password_hint: Mapped[str] = mapped_column(String(16), default="")
+    options: Mapped[dict] = mapped_column(JSONB, default=dict)
+    read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LlmProvider(Base):
+    __tablename__ = "llm_providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    base_url: Mapped[str] = mapped_column(String(300))
+    model: Mapped[str] = mapped_column(String(120))
+    api_key_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    api_key_hint: Mapped[str] = mapped_column(String(16), default="")
+    k8s_secret_name: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    k8s_secret_key: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasoning_effort: Mapped[str] = mapped_column(String(32), default="")
+    extra_params: Mapped[dict] = mapped_column(JSONB, default=dict)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LlmCall(Base):
+    __tablename__ = "llm_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("runs.id"), nullable=True, index=True)
+    provider_name: Mapped[str] = mapped_column(String(63), default="")
+    model: Mapped[str] = mapped_column(String(120), default="")
+    purpose: Mapped[str] = mapped_column(String(32), default="plan")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
 class Schedule(Base):

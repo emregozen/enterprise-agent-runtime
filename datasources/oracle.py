@@ -25,7 +25,13 @@ class OracleSource:
         self.allow_tables = list(allow_tables)
         self.max_limit = max_limit
         user, password, connect_dsn = _parse_oracle_dsn(dsn)
-        self.conn = oracledb.connect(user=user, password=password, dsn=connect_dsn)
+        self.conn = oracledb.connect(
+            user=user,
+            password=password,
+            dsn=connect_dsn,
+            tcp_connect_timeout=5,
+            retry_count=0,
+        )
         if hasattr(self.conn, "call_timeout"):
             self.conn.call_timeout = int(statement_timeout_ms)
 

@@ -1,0 +1,20 @@
+# Real LLM test: DeepSeek (OpenAI-compatible). Key lives in Secret llm-deepseek (both namespaces), never in values.
+llm:
+  mode: openai
+  baseUrl: https://api.deepseek.com
+  model: deepseek-flash
+  temperature: 0
+  reasoningEffort: ""
+  existingSecret:
+    name: llm-deepseek
+    key: api_key
+networkPolicy:
+  enabled: true
+  # PoC compromise: NetworkPolicy cannot match DNS names, so run pods may reach any public IP on 443.
+  # Private ranges (cluster, service, node, corporate) stay blocked.
+  # Production should use an egress proxy or EgressFirewall dnsName. See deploy/openshift/egressfirewall.example.yaml.
+  extraEgress:
+    - name: llm-public-443
+      cidr: 0.0.0.0/0
+      port: 443
+      except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

@@ -96,6 +96,26 @@ def test_json_mode_falls_back_when_the_engine_rejects_it():
         server.shutdown()
 
 
+def test_reasoning_effort_is_off_unless_configured():
+    server, base_url = _server(reject_json_mode=False)
+    try:
+        plain = OpenAICompatibleLLM(base_url=base_url, api_key="contract-key", model="tiny-local", timeout=10)
+        plain.complete([{"role": "user", "content": "özetle"}])
+        assert "reasoning_effort" not in server.requests[0]["body"]  # type: ignore[attr-defined]
+        low = OpenAICompatibleLLM(
+            base_url=base_url,
+            api_key="contract-key",
+            model="tiny-local",
+            timeout=10,
+            reasoning_effort="low",
+        )
+        low.complete([{"role": "user", "content": "özetle"}])
+        assert server.requests[-1]["body"]["reasoning_effort"] == "low"  # type: ignore[attr-defined]
+        assert low.calls[-1]["latency_ms"] >= 0
+    finally:
+        server.shutdown()
+
+
 def test_make_llm_uses_the_openai_compatible_client():
     server, base_url = _server(reject_json_mode=False)
     try:

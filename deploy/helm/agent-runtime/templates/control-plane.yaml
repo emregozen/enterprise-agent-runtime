@@ -81,8 +81,28 @@ spec:
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
+                  {{- if .Values.llm.existingSecret.name }}
+                  name: {{ .Values.llm.existingSecret.name | quote }}
+                  key: {{ .Values.llm.existingSecret.key | quote }}
+                  {{- else }}
                   name: agent-runtime-env
                   key: LLM_API_KEY
+                  {{- end }}
+            - name: LLM_TEMPERATURE
+              value: {{ .Values.llm.temperature | quote }}
+            - name: LLM_REASONING_EFFORT
+              value: {{ .Values.llm.reasoningEffort | quote }}
+            {{- if .Values.llm.existingSecret.name }}
+            - name: LLM_K8S_SECRET_NAME
+              value: {{ .Values.llm.existingSecret.name | quote }}
+            - name: LLM_K8S_SECRET_KEY
+              value: {{ .Values.llm.existingSecret.key | quote }}
+            {{- end }}
+            - name: CONFIG_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-master-key
+                  key: key
             - name: LLM_MODEL_CLASSES
               value: {{ .Values.llm.modelClasses | quote }}
             - name: RUN_BACKEND

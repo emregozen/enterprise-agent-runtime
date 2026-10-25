@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -117,9 +116,11 @@ def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: 
 def _assert_sources(db: Session, spec: dict) -> None:
     refs = spec["spec"]["datasources"]
     sensitivities = []
+    from control_plane.catalog import find_datasource
+
     for ref in refs:
-        row = db.query(DataSourceRecord).filter(DataSourceRecord.name == ref["ref"], DataSourceRecord.enabled.is_(True)).one_or_none()
-        if row is None:
+        row = find_datasource(db, ref["ref"])
+        if row is None or not row.enabled:
             raise ServiceError(f"veri kaynağı yok: {ref['ref']}", 400)
         unknown = [table for table in ref["allowTables"] if table not in set(row.allow_tables)]
         if unknown:
@@ -376,6 +377,9 @@ def complete_run(db: Session, run: Run, payload: dict) -> Run:
     run.needs_review_reason = payload.get("needs_review_reason")
     run.finished_at = utcnow()
     action = "run.needs_review" if status == "needs_review" else "run.completed"
+    from control_plane.catalog import persist_llm_calls
+
+    persist_llm_calls(db, run, (run.summary or {}).get("llm_calls"), "plan")
     audit(db, f"run:{run.id}", action, "run", str(run.id), {"status": status})
     if status == "needs_review":
         audit(
@@ -514,21 +518,23 @@ def get_settings_safe():
 
 
 def load_sources_for_spec(db: Session, spec: dict) -> list[DataSourceRecord]:
-    names = [item["ref"] for item in spec["spec"]["datasources"]]
-    rows = db.query(DataSourceRecord).filter(DataSourceRecord.name.in_(names)).all()
-    by_name = {row.name: row for row in rows}
+    from control_plane.catalog import find_datasource
+
     ordered = []
-    for name in names:
-        if name not in by_name:
-            raise ServiceError(f"veri kaynağı yok: {name}", 400)
-        ordered.append(by_name[name])
+    for item in spec["spec"]["datasources"]:
+        row = find_datasource(db, item["ref"])
+        if row is None:
+            raise ServiceError(f"veri kaynağı yok: {item['ref']}", 400)
+        ordered.append(row)
     return ordered
 
 
 def materialize_sources(rows: list[DataSourceRecord]) -> list[dict]:
+    from control_plane.catalog import datasource_dsn
+
     materialized = []
     for row in rows:
-        dsn = os.environ.get(row.dsn_env, "")
+        dsn = datasource_dsn(row, require=False)
         if not dsn and not row.k8s_secret_name:
             raise ServiceError(f"{row.dsn_env} kontrol düzlemi ortamında yok", 500)
         materialized.append(
