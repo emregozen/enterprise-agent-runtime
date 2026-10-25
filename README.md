@@ -206,13 +206,24 @@ podman push --tls-verify=false "$HOST/agent-runtime/agent-runtime-ui:0.2.0"
 helm upgrade --install agent-runtime deploy/helm/agent-runtime \
   --namespace agent-runtime --create-namespace \
   -f deploy/helm/agent-runtime/values-crc.yaml
+```
+
+`podman` yoksa imajları kümede derleyin. Adım adım komutlar `OPENSHIFT-LOCAL-CHECKLIST.md` bölüm 3’tedir (`oc new-build --binary`, `oc start-build --from-dir`).
+
+Dar bir CRC sanal makinesinde aynı kuruluma `values-crc-small.yaml` eklenir. İstekler düşer; koşumun geçici disk isteği 1Gi kalır.
+
+```bash
+helm upgrade --install agent-runtime deploy/helm/agent-runtime \
+  --namespace agent-runtime --create-namespace \
+  -f deploy/helm/agent-runtime/values-crc.yaml \
+  -f deploy/helm/agent-runtime/values-crc-small.yaml
 
 oc get route agent-runtime -n agent-runtime
 oc get pods -n agent-runtime
 oc get pods -n agent-runs
 ```
 
-Chart iki ad alanı açar: `agent-runtime` ve `agent-runs`. Kontrol düzlemi `agent-runs` içinde Job ve Secret yaratır. Run podunun imajı çekebilmesi için `agent-runs` hizmet hesabına `system:image-puller` bağlanır (`grantImagePuller`).
+`--create-namespace` yayın ad alanı `agent-runtime`i açar. Chart bu ad alanını bir daha yazmaz; yazsaydı Helm sahiplik yüzünden kurulumu durdururdu. Chart yalnızca koşum ad alanı `agent-runs`i açar. Kontrol düzlemi Job ve Secret’ı oraya koyar. Postgres adresi `postgres.agent-runtime.svc.cluster.local` olur, böylece koşum ad alanından da çözülür. `ARTIFACT_STORE=pvc` iken kontrol düzlemi `Recreate` ile kalkar. Run podunun imajı çekebilmesi için `agent-runs` hizmet hesabına `system:image-puller` bağlanır (`grantImagePuller`).
 
 LLM kümenin dışındaysa çıkış kapalıdır. `values-crc.yaml` içine ekleyip yeniden kurun:
 
@@ -261,5 +272,5 @@ Parolalar chart değerlerindeki geliştirme varsayılanlarıdır (`agentrt`, `ag
 - Denetim kaydı güncellenemez ve silinemez. Başka tablolar normaldir.
 - Araç vekili saatte `TOOL_RATE_LIMIT_PER_HOUR` çağrıyı geçerse reddeder. Alıcı listesi `EMAIL_RECIPIENT_ALLOWLIST` dışına çıkamaz.
 - `needs_review` ve `dry_run` araç çağırmaz.
-- Artefakt üst sınırı `ARTIFACT_MAX_BYTES` (varsayılan 20 MB). Saklama `ARTIFACT_RETENTION_DAYS` (varsayılan 14). PVC tek kontrol düzlemi replikasına bağlanır.
+- Artefakt üst sınırı `ARTIFACT_MAX_BYTES` (varsayılan 20 MB). Saklama `ARTIFACT_RETENTION_DAYS` (varsayılan 14). PVC tek kontrol düzlemi replikasına bağlanır. Başlamadan düşen koşum (Job 502, `started_at` boş) günlük kotaya yazılmaz. Başlayıp sonra düşen koşum yazılır.
 - Pencere aynı gün içindedir (`07:00-20:00`). Geceyi aşan aralık desteklenmez.

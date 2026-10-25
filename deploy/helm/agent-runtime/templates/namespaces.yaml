@@ -1,11 +1,9 @@
+{{/*
+The release namespace is created by Helm (--create-namespace). Declaring it here
+as well makes install fail: Helm already created the namespace without ownership
+labels, then refuses to adopt this manifest.
+*/}}
 {{- if .Values.createNamespaces }}
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ .Values.namespace }}
-  labels:
-    app.kubernetes.io/part-of: agent-runtime
----
 apiVersion: v1
 kind: Namespace
 metadata:

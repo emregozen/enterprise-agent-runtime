@@ -4,6 +4,13 @@ Kontrol düzlemi: http://control-plane.{{ .Values.namespace }}.svc:8841
 Arayüz servisi: http://ui.{{ .Values.namespace }}.svc:8842
 Koşum ad alanı: {{ .Values.runNamespace }}
 
+Kurulum: helm upgrade --install ... --namespace {{ .Values.namespace }} --create-namespace
+Chart yayın ad alanını yazmaz. Helm o ad alanını açar. Chart yalnızca {{ .Values.runNamespace }} ad alanını açar.
+Postgres adresi: postgres.{{ .Values.namespace }}.svc.{{ .Values.clusterDomain }}
+{{- if eq .Values.artifacts.store "pvc" }}
+Kontrol düzlemi stratejisi: Recreate
+{{- end }}
+
 {{- if .Values.route.enabled }}
 Route:
   oc get route agent-runtime -n {{ .Values.namespace }}

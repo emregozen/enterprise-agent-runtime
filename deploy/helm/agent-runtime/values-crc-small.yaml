@@ -1,0 +1,37 @@
+# Low-memory overlay for OpenShift Local when the default requests do not schedule.
+# Apply after values-crc.yaml:
+#   helm upgrade --install agent-runtime deploy/helm/agent-runtime \
+#     --namespace agent-runtime --create-namespace \
+#     -f deploy/helm/agent-runtime/values-crc.yaml \
+#     -f deploy/helm/agent-runtime/values-crc-small.yaml
+#
+# Sized for a tight CRC VM: three deployments plus a two-container run.
+# ephemeral-storage requests stay at 1Gi so they do not inherit the 10Gi/20Gi limits.
+controlPlane:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+ui:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 96Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+postgres:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+runRequests:
+  cpu: 50m
+  memory: 128Mi
+  ephemeralStorage: 1Gi

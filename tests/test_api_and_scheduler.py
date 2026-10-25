@@ -170,8 +170,9 @@ def test_kubernetes_backend_submits_to_a_fake_api(db, datasource, monkeypatch):
 
     created = {}
 
-    def create_from_dict(api, data):
+    def create_from_dict(api, data, verbose=False, namespace=None, **kwargs):
         created.setdefault("items", []).append(data)
+        created["namespace"] = namespace
         meta = type("M", (), {"name": data["metadata"]["name"], "uid": "uid-1"})()
         return [type("O", (), {"metadata": meta})()]
 
@@ -210,6 +211,9 @@ def test_kubernetes_backend_submits_to_a_fake_api(db, datasource, monkeypatch):
     kinds = [item["kind"] for item in created["items"]]
     assert kinds == ["Secret", "Job"]
     job = created["items"][1]
+    assert created["namespace"] == "agent-runs"
+    assert created["items"][0]["metadata"]["namespace"] == "agent-runs"
+    assert job["metadata"]["namespace"] == "agent-runs"
     assert job["spec"]["backoffLimit"] == 0
     assert job["spec"]["ttlSecondsAfterFinished"] == 600
     assert "agentrt" not in json.dumps(job["spec"]["template"]["spec"]["containers"][1])

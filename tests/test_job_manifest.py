@@ -54,6 +54,10 @@ def test_job_is_restricted_and_executor_has_no_secrets():
     assert executor["securityContext"]["allowPrivilegeEscalation"] is False
     assert executor["securityContext"]["capabilities"]["drop"] == ["ALL"]
     assert any(item["name"] == "RUN_TOKEN" and "secretKeyRef" in item["valueFrom"] for item in harness["env"])
+    assert secret["metadata"]["namespace"] == settings.run_namespace
+    assert job["metadata"]["namespace"] == settings.run_namespace
+    assert harness["resources"]["requests"]["ephemeral-storage"] == "1Gi"
+    assert executor["resources"]["requests"]["ephemeral-storage"] == "1Gi"
     volumes = pod["volumes"]
     assert {item["name"] for item in volumes} == {"work", "tmp"}
     assert all("emptyDir" in item for item in volumes)

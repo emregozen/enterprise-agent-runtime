@@ -21,6 +21,11 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   replicas: {{ .Values.controlPlane.replicas }}
+  {{- if eq .Values.artifacts.store "pvc" }}
+  # ReadWriteOnce cannot attach to the new pod until the old one is gone.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       app: control-plane
@@ -90,6 +95,12 @@ spec:
               value: {{ .Values.runtimeImage | quote }}
             - name: IMAGE_PULL_POLICY
               value: {{ .Values.imagePullPolicy | quote }}
+            - name: RUN_CPU_REQUEST
+              value: {{ .Values.runRequests.cpu | quote }}
+            - name: RUN_MEMORY_REQUEST
+              value: {{ .Values.runRequests.memory | quote }}
+            - name: RUN_EPHEMERAL_STORAGE_REQUEST
+              value: {{ .Values.runRequests.ephemeralStorage | quote }}
             - name: CONTROL_PLANE_PUBLIC_URL
               value: http://control-plane.{{ .Values.namespace }}.svc:8841
             - name: CONTROL_PLANE_INTERNAL_URL
@@ -182,11 +193,11 @@ spec:
             periodSeconds: 5
           resources:
             requests:
-              cpu: 100m
-              memory: 384Mi
+              cpu: {{ .Values.controlPlane.resources.requests.cpu | quote }}
+              memory: {{ .Values.controlPlane.resources.requests.memory | quote }}
             limits:
-              cpu: "1"
-              memory: 1Gi
+              cpu: {{ .Values.controlPlane.resources.limits.cpu | quote }}
+              memory: {{ .Values.controlPlane.resources.limits.memory | quote }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

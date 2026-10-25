@@ -61,11 +61,11 @@ spec:
             periodSeconds: 5
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: {{ .Values.ui.resources.requests.cpu | quote }}
+              memory: {{ .Values.ui.resources.requests.memory | quote }}
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: {{ .Values.ui.resources.limits.cpu | quote }}
+              memory: {{ .Values.ui.resources.limits.memory | quote }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

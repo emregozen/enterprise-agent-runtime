@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     runtime_image: str = "agent-runtime-py312:0.2.0"
     image_pull_policy: str = "IfNotPresent"
     run_namespace: str = "agent-runs"
+    run_cpu_request: str = ""
+    run_memory_request: str = ""
+    run_ephemeral_storage_request: str = "1Gi"
     run_service_account: str = "agent-run"
     job_ttl_seconds: int = 600
     kubeconfig: str = ""

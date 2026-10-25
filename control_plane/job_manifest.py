@@ -119,17 +119,25 @@ def build_run_manifests(
                     "valueFrom": {"secretKeyRef": {"name": secret_name, "key": "LLM_API_KEY"}},
                 }
             )
+    namespace = settings.run_namespace
     secret = {
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
             "name": secret_name,
+            "namespace": namespace,
             "labels": {"app": "agent-run", "agent.internal/run-id": str(run_id)},
         },
         "type": "Opaque",
         "stringData": string_data,
     }
-    requests = {"cpu": _half_cpu(cpu), "memory": _half_memory(memory)}
+    # A limit without a request makes Kubernetes copy the limit into the request.
+    # 10Gi/20Gi of ephemeral storage then keeps the Job Pending on a small node.
+    requests = {
+        "cpu": (settings.run_cpu_request or "").strip() or _half_cpu(cpu),
+        "memory": (settings.run_memory_request or "").strip() or _half_memory(memory),
+        "ephemeral-storage": (settings.run_ephemeral_storage_request or "").strip() or "1Gi",
+    }
     limits = {"cpu": cpu, "memory": memory, "ephemeral-storage": "10Gi"}
     harness = {
         "name": "harness",
@@ -169,6 +177,7 @@ def build_run_manifests(
         "kind": "Job",
         "metadata": {
             "name": job_name,
+            "namespace": namespace,
             "labels": {
                 "app": "agent-run",
                 "agent-id": agent_name[:63],

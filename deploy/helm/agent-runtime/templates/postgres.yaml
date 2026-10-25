@@ -66,11 +66,11 @@ spec:
             periodSeconds: 5
           resources:
             requests:
-              cpu: 100m
-              memory: 512Mi
+              cpu: {{ .Values.postgres.resources.requests.cpu | quote }}
+              memory: {{ .Values.postgres.resources.requests.memory | quote }}
             limits:
-              cpu: "1"
-              memory: 2Gi
+              cpu: {{ .Values.postgres.resources.limits.cpu | quote }}
+              memory: {{ .Values.postgres.resources.limits.memory | quote }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/pgsql/data

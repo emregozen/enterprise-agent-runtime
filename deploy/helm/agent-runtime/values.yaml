@@ -1,6 +1,8 @@
 namespace: agent-runtime
 runNamespace: agent-runs
+# Helm --create-namespace creates the release namespace. This flag only creates runNamespace.
 createNamespaces: true
+clusterDomain: cluster.local
 
 # Empty keeps short image names. OpenShift Local sets the internal registry in values-crc.yaml.
 imageRegistry: ""
@@ -13,10 +15,25 @@ controlPlane:
   # ReadWriteOnce artifact disk mounts on one pod. Leave this at 1 while
   # artifacts.store is pvc. More replicas need artifacts.store=s3 or RWX storage.
   # The chart refuses replicas greater than 1 in pvc mode.
+  # PVC mode also sets the Deployment strategy to Recreate.
   replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
 
 ui:
   replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 route:
   enabled: false
@@ -30,6 +47,20 @@ postgres:
   adminPassword: agentrt-admin
   database: agentrt
   storage: 8Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+# Empty cpu/memory keeps the per-agent half of the AgentSpec request.
+# ephemeralStorage is always set so the Job does not inherit the 10Gi/20Gi limit.
+runRequests:
+  cpu: ""
+  memory: ""
+  ephemeralStorage: 1Gi
 
 llm:
   mode: fake

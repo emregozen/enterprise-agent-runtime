@@ -314,6 +314,9 @@ def _runs_today(db: Session, agent_id: uuid.UUID, tz_name: str) -> int:
             Run.dry_run.is_(False),
             Run.created_at >= start,
             Run.status != "cancelled",
+            # Job creation can fail before the pod starts (HTTP 502). Those rows
+            # never ran, so they must not fill max_runs_per_day.
+            ~((Run.status == "failed") & (Run.started_at.is_(None))),
         )
         .count()
     )

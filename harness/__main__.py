@@ -129,6 +129,14 @@ def _upload(client: ControlClient, work: Path, log, max_bytes: int) -> None:
         client.artifact(name, media, data)
 
 
+def _stop_executor(log) -> None:
+    url = os.environ.get("EXECUTOR_URL", "http://127.0.0.1:7070").rstrip("/") + "/v1/shutdown"
+    try:
+        httpx.post(url, timeout=3.0)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("executor shutdown failed: %s", exc)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
@@ -218,6 +226,8 @@ def main() -> None:
             except Exception:
                 sys.exit(1)
         sys.exit(1)
+    finally:
+        _stop_executor(log)
 
 
 if __name__ == "__main__":

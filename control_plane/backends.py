@@ -210,8 +210,8 @@ class KubernetesBackend(RunBackend):
                 settings=settings,
                 llm_api_key=settings.resolve_model((run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")["api_key"],
             )
-            utils.create_from_dict(self.api, secret)
-            created = utils.create_from_dict(self.api, job)
+            utils.create_from_dict(self.api, secret, namespace=self.namespace)
+            created = utils.create_from_dict(self.api, job, namespace=self.namespace)
             job_name = job["metadata"]["name"]
             job_uid = None
             if created:

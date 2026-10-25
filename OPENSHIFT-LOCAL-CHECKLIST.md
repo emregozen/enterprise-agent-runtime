@@ -45,7 +45,7 @@ Beklenen son satır: `Login Succeeded`.
 
 ## 3. İmajlar
 
-Depo kökünden:
+`podman` bu makinede varsa depo kökünden dış depoya itin:
 
 ```bash
 podman build -f deploy/docker/Dockerfile.runtime -t agent-runtime-py312:0.2.0 .
@@ -58,6 +58,36 @@ podman push --tls-verify=false "$HOST/agent-runtime/agent-runtime-ui:0.2.0"
 ```
 
 Beklenen: her `push` satırı `Copying blob` ile biter ve `Storing signatures` veya benzeri bir başarı satırı yazar. `unauthorized` görürseniz `podman login` adımını tekrarlayın.
+
+`podman` yoksa imaj kümenin içinde derlenir. Önce yayın ad alanını açın. Helm aynı ad alanını sonra `--create-namespace` ile kullanır; chart bu ad alanını kendisi yazmaz.
+
+```bash
+oc get ns agent-runtime >/dev/null 2>&1 || oc new-project agent-runtime
+oc new-build --name agent-runtime-py312 --strategy=docker --binary \
+  --to=agent-runtime-py312:0.2.0 -n agent-runtime \
+  --dockerfile="$(cat deploy/docker/Dockerfile.runtime)"
+oc start-build agent-runtime-py312 --from-dir=. --follow -n agent-runtime
+oc new-build --name agent-runtime-ui --strategy=docker --binary \
+  --to=agent-runtime-ui:0.2.0 -n agent-runtime \
+  --build-arg CONTROL_PLANE_URL=http://control-plane.agent-runtime.svc:8841 \
+  --dockerfile="$(cat ui/Dockerfile)"
+oc start-build agent-runtime-ui --from-dir=ui --follow -n agent-runtime
+```
+
+Beklenen: her `start-build` satırı `Push successful` veya `Build ... status: Complete` ile biter.
+
+```bash
+oc get builds -n agent-runtime
+oc get imagestream -n agent-runtime
+```
+
+```text
+NAME                  TYPE      FROM      STATUS
+agent-runtime-py312   Docker    Binary    Complete
+agent-runtime-ui      Docker    Binary    Complete
+```
+
+ImageStream etiketlerinde `0.2.0` görünür. `oc new-build` ikinci kez `already exists` derse build’i silmeden yalnızca `oc start-build` satırlarını çalıştırın.
 
 ```bash
 oc get imagestream -n agent-runtime
@@ -81,7 +111,23 @@ helm upgrade --install agent-runtime deploy/helm/agent-runtime \
   -f deploy/helm/agent-runtime/values-crc.yaml
 ```
 
-Beklenen: `STATUS: deployed` ve `agent-runtime` adında bir Route.
+Dar sanal makinede aynı komuta `-f deploy/helm/agent-runtime/values-crc-small.yaml` ekleyin. Kontrol düzlemi isteği 50m / 256Mi, arayüz 20m / 96Mi, Postgres 50m / 256Mi, koşum isteği 50m / 128Mi ve geçici disk 1Gi olur.
+
+Beklenen: `STATUS: deployed` ve `agent-runtime` adında bir Route. `Namespace "agent-runtime" exists and cannot be imported` görürseniz chart sürümü eskidir; güncel chart yayın ad alanını yazmaz.
+
+```bash
+oc get deploy control-plane -n agent-runtime -o jsonpath='{.spec.strategy.type}{"\n"}'
+oc get secret agent-runtime-env -n agent-runtime -o jsonpath='{.data.SALES_DATABASE_URL}' | base64 -d; echo
+oc get ns agent-runs --no-headers
+```
+
+Beklenen:
+
+```text
+Recreate
+postgresql+psycopg://sales_ro:sales_ro@postgres.agent-runtime.svc.cluster.local:5432/sales
+agent-runs   Active
+```
 
 ```bash
 oc get pods -n agent-runtime
@@ -203,11 +249,12 @@ oc set env pod/"$(oc get pod -n agent-runs -l job-name="$JOB" -o jsonpath='{.ite
 
 Beklenen son satır: `executor ortamında sır yok`.
 
-Run podu artefakt PVC'sini bağlamaz. Yalnızca iki geçici disk vardır:
+Run podu artefakt PVC'sini bağlamaz. Yalnızca iki geçici disk vardır. İki kabın geçici disk isteği 1Gi'dir:
 
 ```bash
 POD="$(oc get pod -n agent-runs -l job-name="$JOB" -o jsonpath='{.items[0].metadata.name}')"
 oc get pod "$POD" -n agent-runs -o jsonpath='{range .spec.volumes[*]}{.name}={.emptyDir.sizeLimit}{"\n"}{end}'
+oc get pod "$POD" -n agent-runs -o jsonpath='{range .spec.containers[*]}{.name} eph={.resources.requests.ephemeral-storage}{"\n"}{end}'
 oc get pod "$POD" -n agent-runs -o json | python3 -c 'import json,sys; vols=json.load(sys.stdin)["spec"]["volumes"]; assert all("persistentVolumeClaim" not in v for v in vols); print("run podunda PVC yok")'
 ```
 
@@ -216,6 +263,8 @@ Beklenen:
 ```text
 work=20Gi
 tmp=2Gi
+harness eph=1Gi
+executor eph=1Gi
 run podunda PVC yok
 ```
 
