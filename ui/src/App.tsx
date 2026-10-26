@@ -7,6 +7,7 @@ import { DataSources } from "./pages/DataSources";
 import { Models } from "./pages/Models";
 import { RunDetail } from "./pages/RunDetail";
 import { Runs } from "./pages/Runs";
+import { SecretProviders } from "./pages/SecretProviders";
 import { SettingsPage } from "./pages/SettingsPage";
 import { Wizard } from "./pages/Wizard";
 
@@ -22,6 +23,7 @@ export function App() {
         <Route path="runs/:id" element={<RunDetail />} />
         <Route path="datasources" element={<DataSources />} />
         <Route path="models" element={<Models />} />
+        <Route path="secrets" element={<SecretProviders />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

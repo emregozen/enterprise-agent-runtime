@@ -21,6 +21,7 @@ COPY datasources ./datasources
 COPY executor ./executor
 COPY harness ./harness
 COPY control_plane ./control_plane
+COPY secret_sources ./secret_sources
 COPY scripts ./scripts
 
 RUN pip install --no-cache-dir . \

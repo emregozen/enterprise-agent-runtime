@@ -11,6 +11,8 @@ spec:
   policyTypes: ["Ingress", "Egress"]
   ingress: []
   egress:
+    # Conjur and CCP are not on this list. The control plane resolves those
+    # secrets into the per-run Secret. Run pods, including the executor, never dial the PAM.
     - to:
         - namespaceSelector:
             matchLabels:

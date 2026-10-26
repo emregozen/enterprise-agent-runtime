@@ -57,7 +57,7 @@ class LocalBackend(RunBackend):
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("koşum kaydı yok")
-            sources = materialize_sources(load_sources_for_spec(db, run.spec_snapshot))
+            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot))
             # Relative work roots must be resolved before the child cwd is that
             # directory. Otherwise the executor joins the same relative path again.
             work = (Path(settings.work_root) / str(run_id)).resolve()
@@ -224,7 +224,7 @@ class KubernetesBackend(RunBackend):
                 raise RuntimeError("koşum kaydı yok")
             from control_plane.catalog import resolve_llm
 
-            sources = materialize_sources(load_sources_for_spec(db, run.spec_snapshot))
+            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot))
             resolved = resolve_llm(db, settings, (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
             secret, job = build_run_manifests(
                 run_id=run.id,

@@ -1,4 +1,4 @@
-import { Bot, Database, LayoutDashboard, Play, Settings, Sparkles } from "lucide-react";
+import { Bot, Database, KeyRound, LayoutDashboard, Play, Settings, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../lib/api";
@@ -9,6 +9,7 @@ const LINKS = [
   { to: "/runs", label: "Koşumlar", icon: Play },
   { to: "/datasources", label: "Veri Kaynakları", icon: Database },
   { to: "/models", label: "LLM Modelleri", icon: Sparkles },
+  { to: "/secrets", label: "Gizli Bilgi Kaynakları", icon: KeyRound },
   { to: "/settings", label: "Ayarlar", icon: Settings },
 ];
 
@@ -19,6 +20,7 @@ const CRUMBS: Record<string, string> = {
   "/runs": "Koşumlar",
   "/datasources": "Veri Kaynakları",
   "/models": "LLM Modelleri",
+  "/secrets": "Gizli Bilgi Kaynakları",
   "/settings": "Ayarlar",
 };
 

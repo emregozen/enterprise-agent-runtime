@@ -51,7 +51,7 @@ def db() -> Session:
     session.execute(
         text(
             "TRUNCATE audit_events, artifacts, tool_calls, run_steps, llm_calls, runs, schedules, "
-            "agent_versions, agents, llm_providers, datasources RESTART IDENTITY CASCADE"
+            "agent_versions, agents, llm_providers, datasources, secret_providers RESTART IDENTITY CASCADE"
         )
     )
     session.commit()

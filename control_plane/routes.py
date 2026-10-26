@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from control_plane.db import get_db
@@ -53,6 +53,10 @@ class DatasourceIn(BaseModel):
     options: dict = Field(default_factory=dict)
     read_only: bool = True
     enabled: bool = True
+    secret_backend: str = ""
+    secret_provider_id: uuid.UUID | None = None
+    secret_path: str = ""
+    secret_ref: dict = Field(default_factory=dict)
 
 
 class DatasourceUpdate(BaseModel):
@@ -71,6 +75,10 @@ class DatasourceUpdate(BaseModel):
     options: dict | None = None
     read_only: bool | None = None
     enabled: bool | None = None
+    secret_backend: str | None = None
+    secret_provider_id: uuid.UUID | None = None
+    secret_path: str | None = None
+    secret_ref: dict | None = None
 
 
 class DraftIn(BaseModel):
@@ -113,6 +121,10 @@ class LlmIn(BaseModel):
     extra_params: dict = Field(default_factory=dict)
     is_default: bool = False
     enabled: bool = True
+    secret_backend: str = ""
+    secret_provider_id: uuid.UUID | None = None
+    secret_path: str = ""
+    secret_ref: dict = Field(default_factory=dict)
 
 
 class LlmPatch(BaseModel):
@@ -126,6 +138,49 @@ class LlmPatch(BaseModel):
     extra_params: dict | None = None
     is_default: bool | None = None
     enabled: bool | None = None
+    secret_backend: str | None = None
+    secret_provider_id: uuid.UUID | None = None
+    secret_path: str | None = None
+    secret_ref: dict | None = None
+
+
+class SecretProviderIn(BaseModel):
+    # Unknown fields (a pasted API key) are dropped. They are not stored and not echoed back.
+    model_config = ConfigDict(extra="ignore")
+    name: str
+    kind: str
+    base_url: str
+    account: str = ""
+    auth_method: str = ""
+    ca_bundle: str = ""
+    config: dict = Field(default_factory=dict)
+    credential_secret_name: str = ""
+    credential_secret_key: str = "api_key"
+    tls_cert_key: str = ""
+    tls_key_key: str = ""
+    credential_namespace: str = ""
+    enabled: bool = True
+
+
+class SecretProviderPatch(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    kind: str | None = None
+    base_url: str | None = None
+    account: str | None = None
+    auth_method: str | None = None
+    ca_bundle: str | None = None
+    config: dict | None = None
+    credential_secret_name: str | None = None
+    credential_secret_key: str | None = None
+    tls_cert_key: str | None = None
+    tls_key_key: str | None = None
+    credential_namespace: str | None = None
+    enabled: bool | None = None
+
+
+class SecretProbeIn(BaseModel):
+    secret_path: str = ""
+    secret_ref: dict = Field(default_factory=dict)
 
 
 class PauseIn(BaseModel):
@@ -211,7 +266,7 @@ def create_datasource(body: DatasourceIn, db: Session = Depends(get_db)):
         raise HTTPException(409, "bu ada sahip bir veri kaynağı var")
     row = DataSourceRecord(name=body.name, dialect="postgres", dsn_env="DS_PENDING", allow_tables=body.allow_tables)
     try:
-        apply_datasource(row, body, creating=True)
+        apply_datasource(db, row, body, creating=True)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
@@ -226,7 +281,7 @@ def introspect(name: str, db: Session = Depends(get_db)):
     row = find_datasource(db, name)
     if row is None:
         raise HTTPException(404, "veri kaynağı yok")
-    return {"catalog": _live_catalog(row)}
+    return {"catalog": _live_catalog(db, row)}
 
 
 @public.post("/builder/draft")
@@ -245,7 +300,7 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
                 "dialect": row.dialect,
                 "allow_tables": row.allow_tables,
                 "sensitivity": row.sensitivity,
-                "catalog": _live_catalog(row),
+                "catalog": _live_catalog(db, row),
             }
         )
     from control_plane.catalog import persist_llm_calls, resolve_llm
@@ -598,12 +653,12 @@ def _ds_out(row: DataSourceRecord) -> dict:
     return datasource_out(row)
 
 
-def _live_catalog(row: DataSourceRecord) -> dict:
-    from control_plane.catalog import datasource_dsn
+def _live_catalog(db: Session, row: DataSourceRecord) -> dict:
+    from control_plane.catalog import connection_material
 
     settings = get_settings()
     try:
-        dsn = datasource_dsn(row, require=True)
+        dsn, _redactions = connection_material(db, row)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     if not dsn:
@@ -671,9 +726,13 @@ def patch_datasource(datasource_id: uuid.UUID, body: DatasourceUpdate, db: Sessi
         options=row.options if body.options is None else body.options,
         read_only=row.read_only if body.read_only is None else body.read_only,
         enabled=row.enabled if body.enabled is None else body.enabled,
+        secret_backend=row.secret_backend if body.secret_backend is None else body.secret_backend,
+        secret_provider_id=row.secret_provider_id if body.secret_provider_id is None else body.secret_provider_id,
+        secret_path=row.secret_path if body.secret_path is None else body.secret_path,
+        secret_ref=row.secret_ref if body.secret_ref is None else body.secret_ref,
     )
     try:
-        apply_datasource(row, merged, creating=False)
+        apply_datasource(db, row, merged, creating=False, reset_secret_source=body.secret_backend is not None)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     db.commit()
@@ -692,7 +751,7 @@ def test_datasource_route(datasource_id: uuid.UUID, db: Session = Depends(get_db
     from control_plane.catalog import test_datasource
 
     try:
-        return test_datasource(_source_or_404(db, datasource_id))
+        return test_datasource(db, _source_or_404(db, datasource_id))
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
@@ -714,7 +773,10 @@ def create_provider(body: LlmIn, db: Session = Depends(get_db)):
     if db.query(LlmProvider).filter(LlmProvider.name == body.name).first():
         raise HTTPException(409, "bu ada sahip bir model var")
     row = LlmProvider(name=body.name, base_url=body.base_url, model=body.model)
-    apply_provider(db, row, body, creating=True)
+    try:
+        apply_provider(db, row, body, creating=True)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
     db.commit()
     return provider_out(row)
@@ -740,8 +802,15 @@ def patch_provider(provider_id: uuid.UUID, body: LlmPatch, db: Session = Depends
         extra_params=row.extra_params if body.extra_params is None else body.extra_params,
         is_default=row.is_default if body.is_default is None else body.is_default,
         enabled=row.enabled if body.enabled is None else body.enabled,
+        secret_backend=row.secret_backend if body.secret_backend is None else body.secret_backend,
+        secret_provider_id=row.secret_provider_id if body.secret_provider_id is None else body.secret_provider_id,
+        secret_path=row.secret_path if body.secret_path is None else body.secret_path,
+        secret_ref=row.secret_ref if body.secret_ref is None else body.secret_ref,
     )
-    apply_provider(db, row, merged, creating=False)
+    try:
+        apply_provider(db, row, merged, creating=False, reset_secret_source=body.secret_backend is not None)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     db.commit()
     return provider_out(row)
 
@@ -766,9 +835,95 @@ def test_provider_route(provider_id: uuid.UUID, db: Session = Depends(get_db)):
     if row is None:
         raise HTTPException(404, "model yok")
     try:
-        return test_provider(row, get_settings())
+        return test_provider(db, row, get_settings())
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+
+
+@public.get("/secret-providers")
+def list_secret_providers(db: Session = Depends(get_db)):
+    from control_plane.models import SecretProvider
+    from control_plane.secret_catalog import secret_provider_out
+
+    rows = db.query(SecretProvider).order_by(SecretProvider.name).all()
+    return [secret_provider_out(row) for row in rows]
+
+
+@public.post("/secret-providers", status_code=201)
+def create_secret_provider(body: SecretProviderIn, db: Session = Depends(get_db)):
+    from control_plane.models import SecretProvider
+    from control_plane.secret_catalog import apply_secret_provider, secret_provider_out
+
+    if db.query(SecretProvider).filter(SecretProvider.name == body.name).first():
+        raise HTTPException(409, "bu ada sahip bir gizli bilgi kaynağı var")
+    row = SecretProvider(name=body.name.strip(), kind=body.kind, base_url=body.base_url)
+    try:
+        apply_secret_provider(row, body, creating=True)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    db.add(row)
+    db.commit()
+    return secret_provider_out(row)
+
+
+@public.patch("/secret-providers/{provider_id}")
+def patch_secret_provider(provider_id: uuid.UUID, body: SecretProviderPatch, db: Session = Depends(get_db)):
+    from control_plane.models import SecretProvider
+    from control_plane.secret_catalog import apply_secret_provider, secret_provider_out
+
+    row = db.get(SecretProvider, provider_id)
+    if row is None:
+        raise HTTPException(404, "gizli bilgi kaynağı yok")
+    merged = SecretProviderIn(
+        name=row.name,
+        kind=body.kind or row.kind,
+        base_url=body.base_url or row.base_url,
+        account=row.account if body.account is None else body.account,
+        auth_method=row.auth_method if body.auth_method is None else body.auth_method,
+        ca_bundle=row.ca_bundle if body.ca_bundle is None else body.ca_bundle,
+        config=row.config if body.config is None else body.config,
+        credential_secret_name=row.credential_secret_name if body.credential_secret_name is None else body.credential_secret_name,
+        credential_secret_key=body.credential_secret_key or row.credential_secret_key,
+        tls_cert_key=row.tls_cert_key if body.tls_cert_key is None else body.tls_cert_key,
+        tls_key_key=row.tls_key_key if body.tls_key_key is None else body.tls_key_key,
+        credential_namespace=row.credential_namespace if body.credential_namespace is None else body.credential_namespace,
+        enabled=row.enabled if body.enabled is None else body.enabled,
+    )
+    try:
+        apply_secret_provider(row, merged, creating=False)
+    except ServiceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    db.commit()
+    return secret_provider_out(row)
+
+
+@public.delete("/secret-providers/{provider_id}", status_code=204)
+def delete_secret_provider(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+    from control_plane.models import SecretProvider
+    from control_plane.secret_catalog import provider_in_use
+
+    row = db.get(SecretProvider, provider_id)
+    if row is None:
+        raise HTTPException(404, "gizli bilgi kaynağı yok")
+    if provider_in_use(db, row.id):
+        raise HTTPException(409, "bu kaynak bir veri kaynağı veya model tarafından kullanılıyor")
+    db.delete(row)
+    db.commit()
+
+
+@public.post("/secret-providers/{provider_id}/test")
+def test_secret_provider(provider_id: uuid.UUID, body: SecretProbeIn | None = None, db: Session = Depends(get_db)):
+    from control_plane.models import SecretProvider
+    from secret_sources.errors import SecretProviderError
+    from secret_sources.resolve import probe_provider
+
+    if db.get(SecretProvider, provider_id) is None:
+        raise HTTPException(404, "gizli bilgi kaynağı yok")
+    probe = body or SecretProbeIn()
+    try:
+        return probe_provider(db, provider_id, path=probe.secret_path, ref=probe.secret_ref)
+    except SecretProviderError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @public.get("/dashboard")

@@ -1,0 +1,31 @@
+# TEST-ONLY. cyberark/conjur:1.24.0 listens on port 80, so the pod needs anyuid.
+# 1.27 is amd64-only and will not start on an arm64 CRC node.
+# Requests stay small: the CRC node is already about 92% requested.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: conjur, namespace: conjur-test}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: conjur}}
+  template:
+    metadata: {labels: {app: conjur}}
+    spec:
+      serviceAccountName: conjur
+      containers:
+      - name: conjur
+        image: docker.io/cyberark/conjur:1.24.0
+        imagePullPolicy: IfNotPresent
+        ports: [{name: http, containerPort: 80}]
+        env:
+        - name: DATABASE_URL
+          valueFrom: {secretKeyRef: {name: conjur-db, key: url}}
+        - name: CONJUR_DATA_KEY
+          valueFrom: {secretKeyRef: {name: conjur-data-key, key: key}}
+        readinessProbe:
+          tcpSocket: {port: 80}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests: {cpu: 50m, memory: 384Mi, ephemeral-storage: 512Mi}
+          limits: {cpu: 500m, memory: 768Mi, ephemeral-storage: 2Gi}

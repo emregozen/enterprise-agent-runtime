@@ -109,6 +109,23 @@ def test_postgres_recreates_and_image_changes_roll_the_workloads():
     assert ui["spec"]["template"]["metadata"]["annotations"]["agent-runtime.internal/image-build"] == "build-9"
 
 
+def test_controller_can_read_provider_secrets_in_its_namespace():
+    docs = _render()
+    role = next(doc for doc in docs if doc.get("kind") == "Role" and doc["metadata"]["name"] == "agent-controller-secrets")
+    assert role["metadata"]["namespace"] == "agent-runtime"
+    assert role["rules"] == [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get"]}]
+    binding = next(doc for doc in docs if doc.get("kind") == "RoleBinding" and doc["metadata"]["name"] == "agent-controller-secrets")
+    assert binding["subjects"][0]["name"] == "agent-controller"
+    assert binding["subjects"][0]["namespace"] == "agent-runtime"
+    run_binding = next(doc for doc in docs if doc.get("kind") == "RoleBinding" and doc["metadata"]["name"] == "agent-run-controller")
+    assert all(subject["name"] != "agent-run" for subject in binding["subjects"])
+    assert run_binding["metadata"]["namespace"] == "agent-runs"
+    deploy = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "control-plane")
+    env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+    namespace = next(item for item in env if item["name"] == "SECRET_NAMESPACE")
+    assert namespace["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
+
+
 def test_postgres_shm_is_a_memory_volume():
     docs = _render()
     postgres = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "postgres")

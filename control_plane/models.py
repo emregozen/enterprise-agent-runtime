@@ -58,6 +58,13 @@ class DataSourceRecord(Base):
     username: Mapped[str] = mapped_column(String(128), default="")
     password_ciphertext: Mapped[str] = mapped_column(Text, default="")
     password_hint: Mapped[str] = mapped_column(String(16), default="")
+    # db | kubernetes | conjur | ccp. External backends store a reference, never the value.
+    secret_backend: Mapped[str] = mapped_column(String(32), default="db")
+    secret_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("secret_providers.id"), nullable=True
+    )
+    secret_path: Mapped[str] = mapped_column(Text, default="")
+    secret_ref: Mapped[dict] = mapped_column(JSONB, default=dict)
     options: Mapped[dict] = mapped_column(JSONB, default=dict)
     read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -74,10 +81,38 @@ class LlmProvider(Base):
     api_key_hint: Mapped[str] = mapped_column(String(16), default="")
     k8s_secret_name: Mapped[str | None] = mapped_column(String(253), nullable=True)
     k8s_secret_key: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    secret_backend: Mapped[str] = mapped_column(String(32), default="db")
+    secret_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("secret_providers.id"), nullable=True
+    )
+    secret_path: Mapped[str] = mapped_column(Text, default="")
+    secret_ref: Mapped[dict] = mapped_column(JSONB, default=dict)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     reasoning_effort: Mapped[str] = mapped_column(String(32), default="")
     extra_params: Mapped[dict] = mapped_column(JSONB, default=dict)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SecretProvider(Base):
+    """A Conjur, CCP, or future Vault/OpenBao endpoint. Credentials are a Kubernetes Secret reference."""
+
+    __tablename__ = "secret_providers"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    base_url: Mapped[str] = mapped_column(String(300))
+    account: Mapped[str] = mapped_column(String(128), default="")
+    auth_method: Mapped[str] = mapped_column(String(32), default="api-key")
+    ca_bundle: Mapped[str] = mapped_column(Text, default="")
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    credential_secret_name: Mapped[str] = mapped_column(String(253), default="")
+    credential_secret_key: Mapped[str] = mapped_column(String(253), default="api_key")
+    tls_cert_key: Mapped[str] = mapped_column(String(253), default="")
+    tls_key_key: Mapped[str] = mapped_column(String(253), default="")
+    credential_namespace: Mapped[str] = mapped_column(String(63), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

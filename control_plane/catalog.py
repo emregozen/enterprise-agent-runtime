@@ -32,10 +32,31 @@ def _dsn_env_for(name: str) -> str:
     return f"DS_{cleaned[:40]}"
 
 
+def _password_configured(row: DataSourceRecord) -> bool:
+    from secret_sources.resolve import effective_backend
+
+    backend = effective_backend(row, "password_ciphertext")
+    if backend == "kubernetes":
+        return bool(row.k8s_secret_name)
+    if backend == "conjur":
+        return bool(row.secret_provider_id and (row.secret_path or "").strip())
+    if backend == "ccp":
+        ref = row.secret_ref or {}
+        return bool(row.secret_provider_id and (ref.get("object") or ref.get("query")))
+    return bool(row.password_ciphertext)
+
+
 def datasource_out(row: DataSourceRecord) -> dict:
     import os
 
-    configured = bool(row.password_ciphertext or row.k8s_secret_name or (row.dsn_env and os.environ.get(row.dsn_env)))
+    from secret_sources.resolve import effective_backend
+
+    backend = effective_backend(row, "password_ciphertext")
+    password_set = _password_configured(row)
+    hint = public_hint(row.password_ciphertext, row.password_hint)
+    if password_set and not hint:
+        hint = "••••"
+    configured = bool(password_set or (row.dsn_env and os.environ.get(row.dsn_env)))
     return {
         "id": str(row.id),
         "name": row.name,
@@ -47,12 +68,16 @@ def datasource_out(row: DataSourceRecord) -> dict:
         "enabled": row.enabled,
         "k8s_secret_name": row.k8s_secret_name,
         "k8s_secret_key": row.k8s_secret_key,
+        "secret_backend": backend,
+        "secret_provider_id": str(row.secret_provider_id) if row.secret_provider_id else None,
+        "secret_path": row.secret_path or "",
+        "secret_ref": row.secret_ref or {},
         "host": row.host or "",
         "port": row.port,
         "database_name": row.database_name or "",
         "username": row.username or "",
-        "password_set": bool(row.password_ciphertext),
-        "password_hint": public_hint(row.password_ciphertext, row.password_hint),
+        "password_set": password_set,
+        "password_hint": hint,
         "options": row.options or {},
         "read_only": bool(row.read_only),
         "configured": configured,
@@ -60,7 +85,7 @@ def datasource_out(row: DataSourceRecord) -> dict:
     }
 
 
-def apply_datasource(row: DataSourceRecord, body, *, creating: bool) -> None:
+def apply_datasource(db: Session, row: DataSourceRecord, body, *, creating: bool, reset_secret_source: bool = False) -> None:
     from control_plane.service import ServiceError
 
     dialect = body.dialect
@@ -78,8 +103,6 @@ def apply_datasource(row: DataSourceRecord, body, *, creating: bool) -> None:
     row.allow_tables = tables
     row.sensitivity = body.sensitivity
     row.enabled = body.enabled
-    row.k8s_secret_name = body.k8s_secret_name or None
-    row.k8s_secret_key = body.k8s_secret_key or None
     row.host = (body.host or "").strip()
     row.port = int(body.port or (1521 if dialect == "oracle" else 5432))
     row.database_name = (body.database_name or "").strip()
@@ -91,9 +114,103 @@ def apply_datasource(row: DataSourceRecord, body, *, creating: bool) -> None:
         row.dsn_env = (body.dsn_env or "").strip() or _dsn_env_for(row.name)
     elif body.dsn_env:
         row.dsn_env = body.dsn_env.strip()
-    if body.password:
-        row.password_ciphertext = encrypt_secret(body.password)
-        row.password_hint = secret_hint(body.password)
+    if reset_secret_source or creating:
+        _assign_secret_source(db, row, body, kind="password")
+    else:
+        row.k8s_secret_name = body.k8s_secret_name or None
+        row.k8s_secret_key = body.k8s_secret_key or None
+        if body.password:
+            row.password_ciphertext = encrypt_secret(body.password)
+            row.password_hint = secret_hint(body.password)
+
+
+def _assign_secret_source(db: Session, row, body, *, kind: str) -> None:
+    """Store a reference. A non-db backend never keeps the secret value."""
+    from control_plane.service import ServiceError
+
+    incoming = getattr(body, "password", None) if kind == "password" else getattr(body, "api_key", None)
+    raw_backend = (getattr(body, "secret_backend", None) or "").strip()
+    if not raw_backend:
+        backend = "kubernetes" if (getattr(body, "k8s_secret_name", None) or "").strip() and not incoming else "db"
+    else:
+        backend = raw_backend
+    if backend not in {"db", "kubernetes", "conjur", "ccp"}:
+        raise ServiceError("parola kaynağı platform, kubernetes, conjur veya ccp olmalı", 400)
+    row.secret_backend = backend
+    if backend == "db":
+        row.secret_provider_id = None
+        row.secret_path = ""
+        row.secret_ref = {}
+        row.k8s_secret_name = None
+        row.k8s_secret_key = None
+        password = getattr(body, "password", None) if kind == "password" else getattr(body, "api_key", None)
+        if password:
+            if kind == "password":
+                row.password_ciphertext = encrypt_secret(password)
+                row.password_hint = secret_hint(password)
+            else:
+                row.api_key_ciphertext = encrypt_secret(password)
+                row.api_key_hint = secret_hint(password)
+        return
+    if kind == "password":
+        row.password_ciphertext = ""
+        row.password_hint = ""
+    else:
+        row.api_key_ciphertext = ""
+        row.api_key_hint = ""
+    row.k8s_secret_name = None
+    row.k8s_secret_key = None
+    row.secret_provider_id = None
+    row.secret_path = ""
+    row.secret_ref = {}
+    if backend == "kubernetes":
+        name = (body.k8s_secret_name or "").strip()
+        key = (body.k8s_secret_key or "").strip() or ("dsn" if kind == "password" else "api_key")
+        if not name:
+            raise ServiceError("Kubernetes Secret adı gerekli", 400)
+        row.k8s_secret_name = name
+        row.k8s_secret_key = key
+        return
+    provider = _provider_or_error(db, body.secret_provider_id, backend)
+    row.secret_provider_id = provider.id
+    if backend == "conjur":
+        path = (body.secret_path or "").strip()
+        if not path:
+            raise ServiceError("Conjur değişken yolu gerekli", 400)
+        row.secret_path = path
+        return
+    ref = dict(body.secret_ref or {})
+    app_id = str(ref.get("app_id") or (provider.config or {}).get("app_id") or "").strip()
+    if not app_id:
+        raise ServiceError("CCP AppID gerekli", 400)
+    if not str(ref.get("object") or "").strip() and not str(ref.get("query") or "").strip():
+        raise ServiceError("CCP Object veya Query gerekli", 400)
+    row.secret_ref = {
+        "app_id": str(ref.get("app_id") or "").strip(),
+        "safe": str(ref.get("safe") or "").strip(),
+        "object": str(ref.get("object") or "").strip(),
+        "query": str(ref.get("query") or "").strip(),
+    }
+
+
+def _provider_or_error(db: Session, provider_id, kind: str):
+    from control_plane.models import SecretProvider
+    from control_plane.service import ServiceError
+
+    if not provider_id:
+        raise ServiceError("gizli bilgi kaynağı seçilmedi", 400)
+    try:
+        key = provider_id if isinstance(provider_id, uuid.UUID) else uuid.UUID(str(provider_id))
+    except ValueError as exc:
+        raise ServiceError("gizli bilgi kaynağı yok", 400) from exc
+    provider = db.get(SecretProvider, key)
+    if provider is None:
+        raise ServiceError("gizli bilgi kaynağı yok", 400)
+    if provider.kind != kind:
+        raise ServiceError("seçilen kaynak bu parola türü ile uyuşmuyor", 400)
+    if not provider.enabled:
+        raise ServiceError("gizli bilgi kaynağı kapalı", 400)
+    return provider
 
 
 def datasource_dsn(row: DataSourceRecord, *, require: bool) -> str:
@@ -132,13 +249,81 @@ def _build_dsn(row: DataSourceRecord, password: str) -> str:
     return base + "?" + rendered
 
 
-def test_datasource(row: DataSourceRecord) -> dict:
+def connection_material(db: Session, row: DataSourceRecord) -> tuple[str, list[str]]:
+    """Live DSN plus values that must be stripped from errors."""
+    from control_plane.service import ServiceError
+    from secret_sources.errors import SecretProviderError
+    from secret_sources.resolve import effective_backend, fetch_provider_secret, resolve_kubernetes_value
+
+    backend = effective_backend(row, "password_ciphertext")
+    if backend == "db":
+        password = decrypt_secret(row.password_ciphertext) if row.password_ciphertext else ""
+        return datasource_dsn(row, require=True), [password, row.username or ""]
+    try:
+        if backend == "kubernetes":
+            from shared.config import get_settings
+
+            settings = get_settings()
+            value = resolve_kubernetes_value(
+                row.k8s_secret_name or "",
+                row.k8s_secret_key or "dsn",
+                [settings.run_namespace, settings.secret_namespace],
+            )
+        else:
+            value = fetch_provider_secret(db, row.secret_provider_id, row.secret_path or "", row.secret_ref or {})
+    except SecretProviderError as exc:
+        raise ServiceError(str(exc), 502) from exc
+    if row.host and row.username and "://" not in value:
+        return _build_dsn(row, value), [value, row.username or ""]
+    return value, [value, row.username or ""]
+
+
+def materialized_source(db: Session, row: DataSourceRecord) -> dict:
+    from control_plane.service import ServiceError
+    from secret_sources.errors import SecretProviderError
+    from secret_sources.resolve import effective_backend, fetch_provider_secret
+
+    backend = effective_backend(row, "password_ciphertext")
+    payload = {
+        "name": row.name,
+        "dialect": row.dialect,
+        "dsn_env": row.dsn_env,
+        "allow_tables": list(row.allow_tables),
+        "sensitivity": row.sensitivity,
+    }
+    if backend == "kubernetes":
+        if not row.k8s_secret_name:
+            raise ServiceError(f"{row.name} için Kubernetes Secret adı yok", 400)
+        return {
+            **payload,
+            "dsn": "",
+            "k8s_secret_name": row.k8s_secret_name,
+            "k8s_secret_key": row.k8s_secret_key or "dsn",
+        }
+    if backend in {"conjur", "ccp", "vault"}:
+        try:
+            value = fetch_provider_secret(db, row.secret_provider_id, row.secret_path or "", row.secret_ref or {})
+        except SecretProviderError as exc:
+            raise ServiceError(str(exc), 502) from exc
+        dsn = _build_dsn(row, value) if row.host and row.username else value
+        return {**payload, "dsn": dsn, "k8s_secret_name": None, "k8s_secret_key": None}
+    dsn = datasource_dsn(row, require=False)
+    if not dsn and not row.k8s_secret_name:
+        raise ServiceError(f"{row.dsn_env} kontrol düzlemi ortamında yok", 500)
+    return {
+        **payload,
+        "dsn": dsn,
+        "k8s_secret_name": row.k8s_secret_name,
+        "k8s_secret_key": row.k8s_secret_key,
+    }
+
+
+def test_datasource(db: Session, row: DataSourceRecord) -> dict:
     from control_plane.service import ServiceError
 
     started = time.monotonic()
-    password = decrypt_secret(row.password_ciphertext) if row.password_ciphertext else ""
     try:
-        dsn = datasource_dsn(row, require=True)
+        dsn, redactions = connection_material(db, row)
         if row.dialect == "oracle":
             import oracledb
 
@@ -164,21 +349,39 @@ def test_datasource(row: DataSourceRecord) -> dict:
     except ServiceError:
         raise
     except Exception as exc:  # noqa: BLE001
-        message = redact(str(exc), [password, row.username or ""])
+        message = redact(str(exc), redactions)
         raise ServiceError(f"bağlantı kurulamadı: {message}", 502) from exc
     return {"ok": True, "latency_ms": int((time.monotonic() - started) * 1000)}
 
 
 def provider_out(row: LlmProvider) -> dict:
+    from secret_sources.resolve import effective_backend
+
+    backend = effective_backend(row, "api_key_ciphertext")
+    api_key_set = bool(row.api_key_ciphertext) or backend in {"kubernetes", "conjur", "ccp"}
+    if backend == "conjur":
+        api_key_set = bool(row.secret_provider_id and (row.secret_path or "").strip())
+    elif backend == "ccp":
+        ref = row.secret_ref or {}
+        api_key_set = bool(row.secret_provider_id and (ref.get("object") or ref.get("query")))
+    elif backend == "kubernetes":
+        api_key_set = bool(row.k8s_secret_name)
+    hint = public_hint(row.api_key_ciphertext, row.api_key_hint)
+    if api_key_set and not hint:
+        hint = "••••"
     return {
         "id": str(row.id),
         "name": row.name,
         "base_url": row.base_url,
         "model": row.model,
-        "api_key_set": bool(row.api_key_ciphertext or row.k8s_secret_name),
-        "api_key_hint": public_hint(row.api_key_ciphertext, row.api_key_hint),
+        "api_key_set": api_key_set,
+        "api_key_hint": hint,
         "k8s_secret_name": row.k8s_secret_name,
         "k8s_secret_key": row.k8s_secret_key,
+        "secret_backend": backend,
+        "secret_provider_id": str(row.secret_provider_id) if row.secret_provider_id else None,
+        "secret_path": row.secret_path or "",
+        "secret_ref": row.secret_ref or {},
         "temperature": row.temperature,
         "reasoning_effort": row.reasoning_effort or "",
         "extra_params": row.extra_params or {},
@@ -188,20 +391,23 @@ def provider_out(row: LlmProvider) -> dict:
     }
 
 
-def apply_provider(db: Session, row: LlmProvider, body, *, creating: bool) -> None:
+def apply_provider(db: Session, row: LlmProvider, body, *, creating: bool, reset_secret_source: bool = False) -> None:
     if creating:
         row.name = body.name.strip()
     row.base_url = body.base_url.strip().rstrip("/")
     row.model = body.model.strip()
-    row.k8s_secret_name = body.k8s_secret_name or None
-    row.k8s_secret_key = body.k8s_secret_key or "api_key"
     row.temperature = body.temperature
     row.reasoning_effort = (body.reasoning_effort or "").strip()
     row.extra_params = dict(body.extra_params or {})
     row.enabled = body.enabled
-    if body.api_key:
-        row.api_key_ciphertext = encrypt_secret(body.api_key)
-        row.api_key_hint = secret_hint(body.api_key)
+    if reset_secret_source or creating:
+        _assign_secret_source(db, row, body, kind="api_key")
+    else:
+        row.k8s_secret_name = body.k8s_secret_name or None
+        row.k8s_secret_key = body.k8s_secret_key or row.k8s_secret_key or "api_key"
+        if body.api_key:
+            row.api_key_ciphertext = encrypt_secret(body.api_key)
+            row.api_key_hint = secret_hint(body.api_key)
     if body.is_default:
         db.query(LlmProvider).filter(LlmProvider.id != row.id).update({LlmProvider.is_default: False})
         row.is_default = True
@@ -247,26 +453,67 @@ def resolve_llm(db: Session, settings, model_class: str | None) -> dict:
     provider = find_provider(db, model_class)
     if provider is None:
         return base
-    api_key = decrypt_secret(provider.api_key_ciphertext) if provider.api_key_ciphertext else ""
-    if not api_key and provider.k8s_secret_name:
-        api_key = settings.llm_api_key
-    return {
+    from control_plane.service import ServiceError
+    from secret_sources.errors import SecretProviderError
+    from secret_sources.resolve import effective_backend, fetch_provider_secret
+
+    backend = effective_backend(provider, "api_key_ciphertext")
+    shared = {
         "base_url": provider.base_url,
         "model": provider.model,
-        "api_key": api_key,
-        "k8s_secret_name": provider.k8s_secret_name or "",
-        "k8s_secret_key": provider.k8s_secret_key or "api_key",
         "temperature": settings.llm_temperature if provider.temperature is None else provider.temperature,
         "reasoning_effort": provider.reasoning_effort or "",
         "name": provider.name,
     }
+    if backend == "kubernetes":
+        return {
+            **shared,
+            "api_key": "",
+            "k8s_secret_name": provider.k8s_secret_name or "",
+            "k8s_secret_key": provider.k8s_secret_key or "api_key",
+        }
+    if backend in {"conjur", "ccp", "vault"}:
+        try:
+            api_key = fetch_provider_secret(db, provider.secret_provider_id, provider.secret_path or "", provider.secret_ref or {})
+        except SecretProviderError as exc:
+            raise ServiceError(str(exc), 502) from exc
+        return {**shared, "api_key": api_key, "k8s_secret_name": "", "k8s_secret_key": "api_key"}
+    api_key = decrypt_secret(provider.api_key_ciphertext) if provider.api_key_ciphertext else ""
+    if not api_key and provider.k8s_secret_name:
+        return {
+            **shared,
+            "api_key": "",
+            "k8s_secret_name": provider.k8s_secret_name or "",
+            "k8s_secret_key": provider.k8s_secret_key or "api_key",
+        }
+    return {**shared, "api_key": api_key, "k8s_secret_name": "", "k8s_secret_key": "api_key"}
 
 
-def test_provider(row: LlmProvider, settings) -> dict:
+def _live_api_key(db: Session, row: LlmProvider, settings) -> str:
+    from control_plane.service import ServiceError
+    from secret_sources.errors import SecretProviderError
+    from secret_sources.resolve import effective_backend, fetch_provider_secret, resolve_kubernetes_value
+
+    backend = effective_backend(row, "api_key_ciphertext")
+    try:
+        if backend == "kubernetes":
+            return resolve_kubernetes_value(
+                row.k8s_secret_name or "",
+                row.k8s_secret_key or "api_key",
+                [settings.run_namespace, settings.secret_namespace],
+            )
+        if backend in {"conjur", "ccp", "vault"}:
+            return fetch_provider_secret(db, row.secret_provider_id, row.secret_path or "", row.secret_ref or {})
+    except SecretProviderError as exc:
+        raise ServiceError(str(exc), 502) from exc
+    return decrypt_secret(row.api_key_ciphertext) if row.api_key_ciphertext else settings.llm_api_key
+
+
+def test_provider(db: Session, row: LlmProvider, settings) -> dict:
     from control_plane.service import ServiceError
     from shared.llm import OpenAICompatibleLLM
 
-    api_key = decrypt_secret(row.api_key_ciphertext) if row.api_key_ciphertext else settings.llm_api_key
+    api_key = _live_api_key(db, row, settings)
     if not api_key or api_key == "not-set":
         raise ServiceError("API anahtarı yok", 400)
     llm = OpenAICompatibleLLM(

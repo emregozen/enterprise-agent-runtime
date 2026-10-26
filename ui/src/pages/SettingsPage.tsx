@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, ApiError } from "../lib/api";
 
 type Settings = {
@@ -37,7 +38,7 @@ export function SettingsPage() {
       </section>
       <section className="card">
         <h2>Gizliler</h2>
-        <p>Parolalar ve API anahtarları veritabanında Fernet ile durur. Anahtar <code>agent-runtime-master-key</code> Secret'ındadır; chart yoksa üretir, yükseltmede aynı anahtarı korur. API bu alanları geri vermez. Koşum Secret'ı yalnızca o koşumun ihtiyacı olan bağlantıyı taşır ve Job ile silinir. Kod kabı sır almaz.</p>
+        <p>Üç parola kaynağı vardır. Platform DB değeri Fernet ile saklar; anahtar <code>agent-runtime-master-key</code> Secret'ındadır. Kubernetes Secret başvurusu koşum poduna bağlanır. Conjur ve CCP başvurusunda veritabanında yalnızca yol durur; kontrol düzlemi değeri koşum başlarken okur ve o koşumun Secret'ına koyar. Sağlayıcı kimliği de düz metin değildir, kontrol düzleminin ad alanındaki bir Secret'tan gelir. Ayrıntı <Link to="/secrets">Gizli Bilgi Kaynakları</Link> sayfasındadır. API bu değerleri geri vermez. Koşum Secret'ı Job ile silinir. Kod kabı sır almaz.</p>
       </section>
     </>
   );

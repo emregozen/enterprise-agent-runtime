@@ -6,7 +6,7 @@ Kimlik doğrulama, SSO ve çoklu kiracı bu turda yoktur.
 
 ## Ne değişti
 
-Ajan, veri kaynağı ve model artık arayüzden yönetilir. Postgres veya Oracle bağlantısı, OpenAI uyumlu model adresi ve API anahtarı ekrandan yazılır; parola ve anahtar veritabanında şifreli durur, API bunları geri vermez. Ortam değişkeni ve Helm `llm.existingSecret` yalnızca ilk açılışta bir model tohumlar. Asıl kayıt veritabanındadır.
+Ajan, veri kaynağı ve model arayüzden yönetilir. Postgres veya Oracle bağlantısı, OpenAI uyumlu model adresi ve API anahtarı ekrandan yazılır. Parola platform veritabanında şifreli durabilir, bir Kubernetes Secret'a başvurabilir veya CyberArk'ta kalıp burada yalnız yol olarak saklanabilir. API sırrı geri vermez. Ortam değişkeni ve Helm `llm.existingSecret` yalnızca ilk açılışta bir model tohumlar. Asıl kayıt veritabanındadır.
 
 Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir. Ajan durdurulabilir, kopyalanabilir veya gizlenerek silinebilir; geçmiş koşumlar kalır. Koşum iptal, yeniden çalıştırma ve silme (artefaktıyla birlikte) arayüzdedir. İptal edilen ve hiç başlamadan düşen koşum günlük kotaya yazılmaz.
 
@@ -16,11 +16,31 @@ Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiket
 
 Master key döndürme `python -m control_plane.rotate_master_key` ile yapılır. Güncel anahtar `CONFIG_MASTER_KEY`, eskisi `CONFIG_MASTER_KEY_OLD` olur. `helm get manifest` çıktısından `agent-runtime-master-key` Secret’ı ayıklanır; anahtar düz metin basılır. Adımlar kontrol listesindedir.
 
+Parola kaynağı üç yerden biri olabilir: platform veritabanı, Kubernetes Secret veya CyberArk (Conjur ya da CCP). Ayrıntı aşağıdaki bölümde.
+
 Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
 
 Arayüz sol menülü bir yönetim konsoludur. Açık ve koyu tema vardır. Yazı tipleri ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
 
 Çıkış ağı sessizce açılmaz. Koşum podu DNS, kontrol düzlemi, Postgres ve chart’taki `extraEgress` listesi dışında çıkamaz. Ağ politikası DNS adı seçemediği için DeepSeek denemesinde `0.0.0.0/0:443` kullanılır ve özel aralıklar `except` ile kesilir. Kurumsal kurulumda bunun yerine EgressFirewall veya bir çıkış vekili gerekir.
+
+## Parolalar ve CyberArk
+
+Şirket parolayı bir kasada tutuyor. Uygulamanın kendi veritabanına kopyalaması, kasayı delik deşik eder: yedek, log ve ekran görüntüsü sırrı taşır. PAM (ayrıcalıklı erişim yönetimi) sırrı kasada bırakır; uygulama yalnız “şu kasadaki şu kayıt” der, değeri kullanacağı anda ister.
+
+Bu kasıtta üç kaynak var.
+
+1. **Platform DB.** Parola bu uygulamanın veritabanında Fernet ile durur. Anahtar `agent-runtime-master-key` Secret'ındadır. Varsayılan budur. Küçük deneme ve kasası olmayan ortam içindir.
+2. **Kubernetes Secret.** Veritabanında Secret adı ve anahtarı durur. Koşum podu bu Secret'ı kendi ad alanında `secretKeyRef` ile okur. Değer bizim tablomuza yazılmaz.
+3. **Dış kasa (CyberArk Conjur veya CyberArk CCP).** Veritabanında yalnızca başvuru durur: hangi kasa, hangi değişken veya hangi Safe/Object. Değer hiç yazılmaz. Kontrol düzlemi koşumu kurarken kasadan okur, yalnız o koşumun Secret'ına koyar. Koşum bitince bu Secret Job ile silinir. Kod kabı (executor) bu değeri görmez. Kasa kapalıysa koşum başlamadan düşer; bu düşüş günlük kotaya yazılmaz.
+
+Kasanın kendi kimliği de düz metin değildir. Conjur API anahtarı veya CCP istemci sertifikası, kontrol düzleminin ad alanındaki bir Kubernetes Secret'tadır. Kontrol düzlemi onu okuyabilir. Koşum hesabı okuyamaz.
+
+Conjur Open Source, şirketin kasasının ücretsiz kardeşidir. Aynı REST şekliyle denenir: host API anahtarı kısa ömürlü bir jetona çevrilir, değişken o jetonla okunur. CRC denemesi `deploy/test/conjur` altındadır. İmaj `cyberark/conjur:1.24.0` olmalıdır; 1.27 yalnız amd64'tür. `authn-k8s` ve `authn-jwt` kontrol düzleminin servis hesabı jetonuyla aynı uçlara gider; PoC yolu API anahtarıdır, jeton dosyası bağlanınca diğeri de çalışır.
+
+Şirketteki asıl ürün Conjur değil, CyberArk Central Credential Provider'dır. CCP çağrısı şöyledir: `GET /AIMWebService/api/Accounts?AppID=&Safe=&Object=` veya aynı bilgilerin `Query` ile yazılması. Dönen JSON'da parola `Content` alanındadır. Kimlik, istemci sertifikası (mTLS) ve/veya izinli makine listesidir: isteği atan adres, CyberArk uygulamasında yazılı olmalıdır. Bu kasıt her iki yolu da bilir. CCP bu ortamda kurulmaz; birim testi sahte bir HTTP sunucusuna gider. OpenBao ve Vault aynı kata ayrılmıştır, sır okumaz; bağdaştırıcı sonraki sürüme bırakıldı.
+
+CyberArk ekibinden deneme için şunlar istenir: bir test Safe, bir AppID, kontrol düzlemi pod'larının çıkış adreslerinin izinli makine listesine eklenmesi veya bu AppID için bir istemci sertifikası, ve okunacak hesapların Object adları (satış Postgres parolası, satış Oracle parolası, DeepSeek API anahtarı). Sertifika ve anahtar bir Kubernetes Secret'a konur; arayüze yapıştırılmaz.
 
 ## Ne yapar
 
@@ -36,12 +56,13 @@ Arayüz sol menülü bir yönetim konsoludur. Açık ve koyu tema vardır. Yazı
 
 ```
 control_plane/     FastAPI, kayıt, zamanlayıcı, Job üretimi, araç vekili
+secret_sources/           Conjur, CCP ve ileride OpenBao/Vault
 harness/           plan, SQL, parquet, rapor
 executor/          gizli bilgisiz kod yürütücü
 sqlguard/          tek SELECT, izinli tablo, agrega veya LIMIT
 datasources/       Postgres, Oracle, genel SQLAlchemy
 shared/            AgentSpec, sahte LLM, OpenAI uyumlu istemci
-ui/                Next.js arayüz
+ui/                Vite arayüz
 scripts/           satış verisi
 deploy/helm/       OpenShift / CRC chart
 deploy/openshift/  EgressFirewall örneği (chart uygulamaz)

@@ -15,6 +15,14 @@ _COLUMNS = [
     "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS password_hint VARCHAR(16) NOT NULL DEFAULT ''",
     "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS read_only BOOLEAN NOT NULL DEFAULT true",
+    "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS secret_backend VARCHAR(32) NOT NULL DEFAULT 'db'",
+    "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS secret_provider_id UUID",
+    "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS secret_path TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE datasources ADD COLUMN IF NOT EXISTS secret_ref JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS secret_backend VARCHAR(32) NOT NULL DEFAULT 'db'",
+    "ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS secret_provider_id UUID",
+    "ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS secret_path TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE llm_providers ADD COLUMN IF NOT EXISTS secret_ref JSONB NOT NULL DEFAULT '{}'::jsonb",
 ]
 
 

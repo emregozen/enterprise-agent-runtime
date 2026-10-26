@@ -1,0 +1,30 @@
+# TEST-ONLY. Only the control plane may open Conjur. Run pods are not a source.
+# Egress is DNS plus the existing agent-runtime Postgres.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: conjur-only-control-plane, namespace: conjur-test, labels: {purpose: agent-runtime-test}}
+spec:
+  podSelector: {matchLabels: {app: conjur}}
+  policyTypes: [Ingress, Egress]
+  ingress:
+  - from:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agent-runtime}}
+      podSelector: {matchLabels: {app: control-plane}}
+    ports: [{protocol: TCP, port: 80}]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: openshift-dns}}
+    ports:
+    - {protocol: UDP, port: 5353}
+    - {protocol: TCP, port: 5353}
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+    ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agent-runtime}}
+      podSelector: {matchLabels: {app: postgres}}
+    ports: [{protocol: TCP, port: 5432}]

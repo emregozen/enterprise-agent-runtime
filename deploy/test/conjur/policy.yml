@@ -1,0 +1,25 @@
+# Loaded by bootstrap.sh. Host API key and variable values are not in this file.
+- !policy
+  id: agent-runtime
+  body:
+  - !policy
+    id: postgres-sales
+    body:
+    - !variable password
+  - !policy
+    id: oracle-sales
+    body:
+    - !variable password
+  - !policy
+    id: deepseek
+    body:
+    - !variable
+      id: api-key
+  - !host control
+  - !permit
+    role: !host control
+    privileges: [ read, execute ]
+    resources:
+    - !variable postgres-sales/password
+    - !variable oracle-sales/password
+    - !variable deepseek/api-key

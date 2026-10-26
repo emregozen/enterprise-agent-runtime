@@ -111,6 +111,12 @@ spec:
                   name: agent-runtime-master-key
                   key: previous
                   optional: true
+            - name: SECRET_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: SECRET_CACHE_TTL_SECONDS
+              value: "30"
             - name: LLM_MODEL_CLASSES
               value: {{ .Values.llm.modelClasses | quote }}
             - name: RUN_BACKEND

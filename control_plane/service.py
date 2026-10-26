@@ -532,24 +532,7 @@ def load_sources_for_spec(db: Session, spec: dict) -> list[DataSourceRecord]:
     return ordered
 
 
-def materialize_sources(rows: list[DataSourceRecord]) -> list[dict]:
-    from control_plane.catalog import datasource_dsn
+def materialize_sources(db: Session, rows: list[DataSourceRecord]) -> list[dict]:
+    from control_plane.catalog import materialized_source
 
-    materialized = []
-    for row in rows:
-        dsn = datasource_dsn(row, require=False)
-        if not dsn and not row.k8s_secret_name:
-            raise ServiceError(f"{row.dsn_env} kontrol düzlemi ortamında yok", 500)
-        materialized.append(
-            {
-                "name": row.name,
-                "dialect": row.dialect,
-                "dsn_env": row.dsn_env,
-                "dsn": dsn,
-                "allow_tables": list(row.allow_tables),
-                "sensitivity": row.sensitivity,
-                "k8s_secret_name": row.k8s_secret_name,
-                "k8s_secret_key": row.k8s_secret_key,
-            }
-        )
-    return materialized
+    return [materialized_source(db, row) for row in rows]

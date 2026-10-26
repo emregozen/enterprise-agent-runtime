@@ -446,3 +446,47 @@ Deneme bitince:
 oc -n oracle-test scale deploy/oracle-free --replicas=0
 oc -n agent-runs delete networkpolicy agent-run-egress-oracle-test
 ```
+
+## 10. Conjur Open Source denemesi
+
+Bu, şirketteki CyberArk kasasının ücretsiz karşılığıdır. Ticari PAM kurulmaz. İmaj `cyberark/conjur:1.24.0` olmalıdır. `1.27` yalnız amd64'tür; Apple Silicon CRC (arm64) onu açmaz.
+
+Düğüm istekleri yaklaşık %92 doludur ve boş bellek yaklaşık 3 GB'dir. Conjur ayrı bir Postgres açmaz; `agent-runtime` Postgres'inde `conjur` adlı ayrı bir veritabanı kullanır. İstek 50m CPU ve 384Mi bellektir. Pod `Pending` kalırsa önce Oracle denemesini sıfıra indirin (`oc -n oracle-test scale deploy/oracle-free --replicas=0`). Deneme bitince Conjur'u da sıfıra indirin; istekler düğümde kalmasın.
+
+Sunucu 80 portunu dinler. `restricted-v2` buna izin vermez. `anyuid` yalnız `conjur-test` ad alanındaki `conjur` hesabına bağlanır. Başka bir hesaba vermeyin.
+
+Ağ: Conjur'a yalnız `agent-runtime` içindeki kontrol düzlemi girebilir. Koşum pod'unun çıkış listesinde Conjur yoktur. Kontrol düzlemi parolayı koşum başlarken okur, yalnız o koşumun Secret'ına yazar. Executor bu değeri görmez.
+
+Parolalar komut satırına yazılmaz ve betik onları basmaz. Dosyalar `umask 077` ile açılır.
+
+```bash
+umask 077
+dir=$(mktemp -d)
+printf '%s' 'conjur-db-icin-parola' > "$dir/db-password"
+openssl rand -base64 32 > "$dir/data-key"
+printf '%s' 'postgres-satis-parolasi' > "$dir/postgres-sales"
+printf '%s' 'oracle-satis-parolasi' > "$dir/oracle-sales"
+printf '%s' 'deepseek-api-anahtari' > "$dir/deepseek"
+bash deploy/test/conjur/bootstrap.sh "$dir"
+rm -rf "$dir"
+```
+
+Yukarıdaki değerleri kendi deneme parolalarınızla değiştirin. Betik şunları yapar: `conjur` rolünü ve veritabanını mevcut Postgres'te açar, veri anahtarını ve bağlantı adresini Secret'a koyar, `cyberark/conjur:1.24.0` pod'unu kaldırır, `agentrt` hesabını açar, politikayı yükler. Politika `host/agent-runtime/control` host'unu ve üç değişkeni tanımlar:
+
+- `agent-runtime/postgres-sales/password`
+- `agent-runtime/oracle-sales/password`
+- `agent-runtime/deepseek/api-key`
+
+Host API anahtarı `agent-runtime` ad alanındaki `conjur-host` Secret'ına, `api_key` anahtarıyla yazılır. Düz metin olarak arayüze girilmez. Kontrol düzlemi bu Secret'ı kendi ad alanında `get` ile okur (`agent-controller-secrets`). Koşum hesabı bu Role'a bağlı değildir.
+
+Beklenen: `oc -n conjur-test get pods` Ready, betiğin son satırı `Conjur hazır`. Arayüzde Gizli Bilgi Kaynakları sayfasına bir Conjur kaydı ekleyin: adres `http://conjur.conjur-test.svc`, hesap `agentrt`, kimlik `api-key`, host `host/agent-runtime/control`, Secret adı `conjur-host`. Veri kaynağında Parola kaynağı olarak CyberArk Conjur ve değişken yolunu seçin. Bağlantıyı deneyin; parola veritabanına yazılmaz.
+
+Hesap daha önce açıldıysa betik admin anahtarını yeniden üretmez. İkinci çalıştırmada gizli dizine `admin.api` dosyasını koyun. Dosyayı ekrana basmayın.
+
+Deneme bitince:
+
+```bash
+oc -n conjur-test scale deploy/conjur --replicas=0
+```
+
+İmajı silmek isterseniz, düğümde yer açmak için `oc adm prune images` kullanın. `conjur-test` ad alanını silmek veritabanını silmez; veritabanı `agent-runtime` Postgres'indedir. Onu da kaldırmak için Postgres pod'unun içinde `DROP DATABASE conjur` ve `DROP ROLE conjur` yeterlidir. Bu komutlara parolayı yazmayın.

@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     kubeconfig: str = ""
     llm_k8s_secret_name: str = ""
     llm_k8s_secret_key: str = "api_key"
+    # Namespace of provider credential Secrets (Conjur API key, CCP client cert).
+    # Empty uses the pod namespace, then agent-runtime. Run pods do not read these.
+    secret_namespace: str = ""
+    secret_cache_ttl_seconds: float = 30
 
     scheduler_enabled: bool = True
     scheduler_interval_seconds: float = 10

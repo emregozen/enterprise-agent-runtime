@@ -38,7 +38,7 @@ dev = ["pytest>=8.3"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["shared*", "sqlguard*", "datasources*", "executor*", "harness*", "control_plane*", "scripts*"]
+include = ["shared*", "sqlguard*", "datasources*", "executor*", "harness*", "control_plane*", "scripts*", "secret_sources*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

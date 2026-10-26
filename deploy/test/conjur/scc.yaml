@@ -1,0 +1,8 @@
+# TEST-ONLY. cyberark/conjur:1.24.0 binds port 80.
+# restricted-v2 cannot do that. This binds anyuid only to conjur-test/conjur.
+# Do not reuse this binding for agent-runtime, agent-runs, or a production Conjur.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: conjur-anyuid-test-only, namespace: conjur-test}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: "system:openshift:scc:anyuid"}
+subjects: [{kind: ServiceAccount, name: conjur, namespace: conjur-test}]

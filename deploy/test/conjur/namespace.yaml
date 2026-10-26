@@ -1,0 +1,21 @@
+# TEST-ONLY. CyberArk Conjur Open Source for the secret-provider trial on CRC.
+# There is no extra Postgres: the server uses database `conjur` on the existing
+# agent-runtime Postgres. Scale to 0 when the trial is over:
+#   oc -n conjur-test scale deploy/conjur --replicas=0
+# Do not ship this namespace in a production install.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: conjur-test
+  labels: {purpose: agent-runtime-test}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: conjur, namespace: conjur-test}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: conjur, namespace: conjur-test}
+spec:
+  selector: {app: conjur}
+  ports: [{name: http, port: 80, targetPort: 80}]
