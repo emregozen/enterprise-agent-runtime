@@ -10,7 +10,8 @@ _STEP_CB: contextvars.ContextVar = contextvars.ContextVar("agent_step_cb", defau
 from datasources import open_source
 from shared.llm import make_llm, parse_json_response
 from shared.otel import span
-from shared.report import dig, render_report, values_close
+from harness.sections import missing_sections, requested_sections
+from shared.report import compose_report, dig, values_close
 from sqlguard import guard_sql
 
 PLANNER_SYSTEM = """You are the planner inside an enterprise agent run pod.
@@ -29,7 +30,12 @@ The JSON schema is:
 }
 output.json must contain grand_total (number), sale_count (integer), regions (list), anomalies (list), yesterday.
 Python must compute numbers from the parquet file. Never hard-code totals from memory.
-SQL dialect is given in the user payload. PostgreSQL uses ::float8. Oracle uses CAST.
+Every item in required_sections must be a markdown heading in report_template, and the SQL plus python must compute that section. Do not drop a requested monthly breakdown, top-N list, or other section. Keep a single SELECT statement: extra aggregates go in that statement, in CTEs that only an aggregating query reads, or in one UNION ALL.
+Any extra number you write to output.json (median, p95, monthly rows, top 5) must also have a placeholder or heading in report_template. The runtime appends leftovers, but the heading still has to be yours.
+Do not write a Doğrulama section that tells the reader to cross-check. The runtime replaces that section with the actual pass or fail and the numbers.
+SQL dialect is given in the user payload. PostgreSQL uses ::float8 and LIMIT. Oracle uses CAST, not LIMIT.
+For a raw Oracle export use FETCH FIRST n ROWS ONLY or WHERE ROWNUM <= n. FETCH FIRST n PERCENT and WITH TIES are rejected.
+When ordering Turkish text on Oracle, use ORDER BY NLSSORT(column, 'NLS_SORT=TURKISH') so İç Anadolu is not last. In python, sort region names with Turkish alphabet order (ç after c, ğ after g, ı before i, ö after o, ş after s, ü after u).
 If role is repair, fix the code or SQL using the error. Still do not invent numbers.
 Execution environment for "python": Python 3.12 standard library plus duckdb, polars and pyarrow.
 pandas and numpy are NOT installed; do not import them. There is no network access.
@@ -48,6 +54,8 @@ Use only the datasources listed in the user payload. Do not invent table names.
 model.class must be local-default when any datasource sensitivity is restricted.
 tools may include send_email, send_sms, http_request only when the description asks.
 schedule.mode is cron, self, hybrid, or manual. Use Europe/Istanbul.
+If the description does not name a clock time or a day part (sabah, akşam, her gün, hafta içi), schedule.mode is manual and cron is null. Do not invent a time such as 08:15.
+Put every report part the description asks for into spec.output.sections, as short titles (for example "Aylık kırılım", "İlk 5"). Do not drop one to simplify the spec.
 The JSON must follow agentspec_schema in the user payload exactly. Top-level keys are
 apiVersion, kind, metadata (name, version: 1, owner) and spec (goal, datasources, schedule, ...).
 Example skeleton:
@@ -55,7 +63,8 @@ Example skeleton:
  "metadata": {"name": "gunluk-satis-ozeti", "version": 1, "owner": "ekip"},
  "spec": {"goal": "...", "model": {"class": "local-default"},
           "datasources": [{"ref": "postgres-sales", "allowTables": ["sales"]}],
-          "tools": [], "schedule": {"mode": "cron", "cron": "30 8 * * *", "timeZone": "Europe/Istanbul"}}}
+          "tools": [], "schedule": {"mode": "manual", "timeZone": "Europe/Istanbul"},
+          "output": {"sections": ["Bölge", "Sapma"]}}}
 If the payload has validation_error, return a corrected full AgentSpec.
 """
 
@@ -270,7 +279,22 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
             last_reason = "çapraz kontrol sorgusu tanımlı değil"
             failed = [{"name": "missing", "ok": False}]
         if not failed:
-            return _succeed(ctx, steps, output, plan, work, checks, attempt)
+            report = compose_report(plan.get("report_template") or "", output, checks)
+            missing = missing_sections(report, requested_sections(ctx.goal, ctx.spec))
+            if not missing:
+                return _succeed(ctx, steps, output, plan, work, checks, attempt)
+            last_reason = "raporda eksik bölüm: " + ", ".join(missing)
+            if attempt == max_rounds:
+                return _finish(ctx, "needs_review", steps, reason=last_reason, report=report, extra={"checks": checks})
+            plan = _complete_plan(
+                llm,
+                _plan_payload(
+                    ctx,
+                    catalog,
+                    repair={"error": last_reason, "missing_sections": missing, "previous": _previous(plan)},
+                ),
+            )
+            continue
         last_reason = "SQL çapraz kontrolü tutmadı: " + ", ".join(item["name"] for item in failed)
         if attempt == max_rounds:
             return _finish(
@@ -278,7 +302,7 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
                 "needs_review",
                 steps,
                 reason=last_reason,
-                report=_safe_report(plan, output),
+                report=_safe_report(plan, output, checks),
                 extra={"checks": checks, "output_keys": list(output.keys())},
             )
         repair_preview = None
@@ -298,7 +322,7 @@ def _attempt_loop(ctx, settings, source, executor, llm, plan, catalog, work: Pat
 
 
 def _succeed(ctx: RunContext, steps: list[dict], output: dict, plan: dict, work: Path, checks: list[dict], attempt: int) -> RunOutcome:
-    report = render_report(plan.get("report_template") or "", output)
+    report = compose_report(plan.get("report_template") or "", output, checks)
     (work / "report.md").write_text(report, encoding="utf-8")
     summary = {
         "grand_total": output.get("grand_total"),
@@ -373,6 +397,7 @@ def _plan_payload(ctx: RunContext, catalog: dict, repair: dict | None) -> dict:
         "schedule_mode": ctx.schedule_mode,
         "dry_run": ctx.dry_run,
         "previous_summary": ctx.previous_summary,
+        "required_sections": requested_sections(ctx.goal, ctx.spec),
         "repair": repair,
     }
 
@@ -387,9 +412,9 @@ def _complete_plan(llm, payload: dict) -> dict:
         return parse_json_response(llm.complete(messages))
 
 
-def _safe_report(plan: dict, output: dict) -> str:
+def _safe_report(plan: dict, output: dict, checks: list[dict] | None = None) -> str:
     try:
-        return render_report(plan.get("report_template") or "", output)
+        return compose_report(plan.get("report_template") or "", output, checks)
     except Exception:
         return ""
 

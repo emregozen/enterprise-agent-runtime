@@ -47,6 +47,9 @@ postgres:
   adminPassword: agentrt-admin
   database: agentrt
   storage: 8Gi
+  # Parallel VACUUM fails on the 64MiB /dev/shm a container gets by default.
+  # The memory emptyDir counts against the container memory limit.
+  shmSize: 256Mi
   resources:
     requests:
       cpu: 100m

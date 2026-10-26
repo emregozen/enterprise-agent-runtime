@@ -131,7 +131,10 @@ def test_harness_cross_checks_and_does_not_show_raw_rows_to_the_model(sales, tmp
     assert outcome.notification["to"] == "finans@sirket.local"
     assert (tmp_path / "chart.svg").exists()
     assert (tmp_path / "report.md").exists()
-    assert "Doğu Anadolu" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "Doğu Anadolu" in report
+    assert "geçti" in report
+    assert "edilmeli" not in report
 
 
 def test_failed_cross_check_repairs_then_a_stuck_fault_needs_review(sales, tmp_path: Path):
@@ -154,3 +157,23 @@ def test_failed_cross_check_repairs_then_a_stuck_fault_needs_review(sales, tmp_p
         process.wait(timeout=5)
     assert stuck.status == "needs_review"
     assert stuck.notification is None
+
+
+def test_missing_requested_sections_block_success_until_the_report_has_them(sales, tmp_path: Path):
+    goal = (
+        "Dünkü satışları bölge bazında özetle, son 12 ayın aylık kırılımını ve ilk 5 ürünü yaz, "
+        "yüzde 10'dan büyük sapmaları açıkla."
+    )
+    process, url = _executor(tmp_path)
+    llm = RecordingLLM()
+    try:
+        outcome = execute_run(_context(tmp_path, url, goal=goal, tools=[], schedule_mode="manual"), llm=llm)
+    finally:
+        process.kill()
+        process.wait(timeout=5)
+    assert outcome.status == "succeeded", outcome.needs_review_reason
+    assert "Aylık kırılım" in outcome.report_markdown
+    assert "İlk 5" in outcome.report_markdown
+    blob = json.dumps(llm.messages, ensure_ascii=False)
+    assert "Aylık kırılım" in blob
+    assert "İlk 5" in blob

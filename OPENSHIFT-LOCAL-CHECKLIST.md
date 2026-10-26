@@ -94,6 +94,15 @@ Beklenen son satır: `Login Succeeded`.
 
 ## 3. İmajlar
 
+Derlemeden ve imaj itmeden önce eski build ve imaj katmanlarını silin. CRC düğümü imaj diski yaklaşık %15’in altına düşünce `disk-pressure` taint’i alır (`NoSchedule`). Kontrol düzlemi `Recreate` olduğu için bu sırada pod da kalkmaz; bir denemede düğüm yaklaşık beş dakika (10:32–10:37) ayakta değildi. `crc config set disk-size` yeni bir sanal makine ister, çalışan diski büyütmez.
+
+```bash
+oc adm prune builds --keep-complete=1 --keep-failed=1 -n agent-runtime --confirm
+oc adm prune images --keep-tag-revisions=1 --confirm
+```
+
+`oc adm prune images` kümedeki kullanılmayan imaj katmanlarını siler. Başka projelerin etiketlenmemiş imajlarına da dokunabilir; yalnızca bu deneme kümesinde çalıştırın.
+
 `podman` bu makinede varsa depo kökünden dış depoya itin:
 
 ```bash
@@ -161,6 +170,8 @@ helm upgrade --install agent-runtime deploy/helm/agent-runtime \
 ```
 
 Dar sanal makinede aynı komuta `-f deploy/helm/agent-runtime/values-crc-small.yaml` ekleyin. Kontrol düzlemi isteği 50m / 256Mi, arayüz 20m / 96Mi, Postgres 50m / 256Mi, koşum isteği 50m / 128Mi ve geçici disk 1Gi olur.
+
+Postgres kabında `/dev/shm` bir `emptyDir` bellek diski olarak bağlanır (`postgres.shmSize`, varsayılan `256Mi`). Varsayılan 64MiB paylaşılan bellek paralel `VACUUM`’u düşürür. Bu disk, kabın bellek limitinden yer yer; limiti `shmSize` altına indirmeyin.
 
 Beklenen: `STATUS: deployed` ve `agent-runtime` adında bir Route. `Namespace "agent-runtime" exists and cannot be imported` görürseniz chart sürümü eskidir; güncel chart yayın ad alanını yazmaz.
 
@@ -363,3 +374,34 @@ CIDR'yi kendi ağ geçidinizle değiştirin. `deploy/openshift/egressfirewall.ex
 | Arayüz açılıyor, veri gelmiyor | UI podunda `CONTROL_PLANE_URL=http://control-plane.agent-runtime.svc:8841` |
 | PVC `Pending` | `oc describe pvc artifacts -n agent-runtime`. Varsayılan sınıf yoksa `artifacts.storageClass` verin |
 | Koşum `succeeded`, indirme 404 | `oc exec -n agent-runtime deploy/control-plane -- ls /var/artifacts`. `ARTIFACT_STORE=pvc` ve disk bağlı mı |
+
+## 9. Oracle Free denemesi
+
+`deploy/test/oracle` yalnızca CRC üzerindeki geçici Oracle Database Free içindir. Üretim chart’ına girmez. `anyuid` bağları yalnız `oracle-test` ad alanındaki `oracle` ServiceAccount’una verilir; restricted-v2’nin rastgele UID’si imajın `/opt/oracle` dizinine yazamaz. Veritabanının PVC’si yoktur. Deneme bitince deployment’ı sıfıra indirin, gerekirse imajı silin.
+
+Parolaları depoya koymayın. Üç parolayı yerel dosyalara yazın (`sys`, `owner`, `ro`) ve Secret’ı dosyadan üretin:
+
+```bash
+oc apply -f deploy/test/oracle/namespace.yaml
+oc -n oracle-test create secret generic oracle-creds \
+  --from-file=sys=./sys --from-file=owner=./owner --from-file=ro=./ro
+oc apply -f deploy/test/oracle/scc.yaml
+oc apply -f deploy/test/oracle/namespace.yaml
+```
+
+İkinci `namespace.yaml` uygulaması Secret’tan sonra Deployment’ın parola dosyalarını görmesi içindir. Pod hazır olunca, `agent-runs` varsa çıkış politikasını açın ve salt okunur kullanıcıyı kurun. `load-sales.sql` bu depoda yoktur; satır yüklemek için onu betiğin yanına koyun. Betik parolayı yazdırmaz.
+
+```bash
+oc -n oracle-test rollout status deploy/oracle-free
+oc apply -f deploy/test/oracle/networkpolicy.yaml
+bash deploy/test/oracle/reload.sh
+```
+
+Beklenen: `sales_ro` kullanıcısı `FREEPDB1` içinde `sales` eşanlamlısını görür, `CREATE SESSION` ve `SELECT` dışında yetkisi yoktur. Koşum podu `oracle.oracle-test.svc:1521` adresine çıkar.
+
+Deneme bitince:
+
+```bash
+oc -n oracle-test scale deploy/oracle-free --replicas=0
+oc -n agent-runs delete networkpolicy agent-run-egress-oracle-test
+```

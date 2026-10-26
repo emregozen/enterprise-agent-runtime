@@ -128,16 +128,21 @@ export function Wizard() {
           </label>
         )}
         {step === 3 && (
-          <div className="grid-2">
-            <label className="field">Mod
-              <select value={schedule?.mode || "manual"} onChange={(event) => updateSchedule(event.target.value, schedule?.cron || "30 8 * * 1-5")}>
-                <option value="manual">Elle</option>
-                <option value="cron">Zamanlı</option>
-                <option value="hybrid">Zamanlı + kendi kararı</option>
-                <option value="self">Kendi kararı</option>
-              </select>
-            </label>
-            <label className="field">Cron<input value={schedule?.cron || ""} onChange={(event) => updateSchedule(schedule?.mode || "cron", event.target.value)} /></label>
+          <div>
+            <div className="grid-2">
+              <label className="field">Mod
+                <select value={schedule?.mode || "manual"} onChange={(event) => updateSchedule(event.target.value, schedule?.cron || "30 8 * * 1-5")}>
+                  <option value="manual">Elle</option>
+                  <option value="cron">Zamanlı</option>
+                  <option value="hybrid">Zamanlı + kendi kararı</option>
+                  <option value="self">Kendi kararı</option>
+                </select>
+              </label>
+              <label className="field">Cron<input value={schedule?.cron || ""} onChange={(event) => updateSchedule(schedule?.mode || "cron", event.target.value)} /></label>
+            </div>
+            {(!schedule?.mode || schedule.mode === "manual") && (
+              <p>Açıklamada saat yoksa taslak elle kalır. Zamanı siz yazın; sihirbaz saat uydurmaz.</p>
+            )}
           </div>
         )}
         {step === 4 && parsed && (

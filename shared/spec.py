@@ -29,6 +29,52 @@ def parse_duration(value: str) -> int:
     return seconds
 
 
+_SCHEDULE_WORDS = (
+    "sabah",
+    "aksam",
+    "oglen",
+    "gece",
+    "her gun",
+    "hafta ici",
+    "haftalik",
+    "pazartesi",
+    "sali",
+    "carsamba",
+    "persembe",
+    "cuma",
+    "cumartesi",
+    "pazar",
+    "cron",
+    "zamanla",
+    "her ay",
+)
+
+
+def fold_tr(text: str) -> str:
+    return text.translate(_TR).lower()
+
+
+def description_implies_schedule(text: str) -> bool:
+    """True when the description names a clock time or a day part. A bare request does not."""
+    folded = fold_tr(text)
+    if re.search(r"\d{1,2}[:.]\d{2}", text):
+        return True
+    if re.search(r"\b\d{1,2}\s*de\b", folded):
+        return True
+    return any(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", folded) for word in _SCHEDULE_WORDS)
+
+
+def apply_default_schedule(spec: dict, description: str) -> dict:
+    """Drop a model-invented cron when the description never asked for a time."""
+    if description_implies_schedule(description):
+        return spec
+    schedule = spec.setdefault("spec", {}).setdefault("schedule", {})
+    schedule["mode"] = "manual"
+    schedule["cron"] = None
+    schedule["selfScheduling"] = None
+    return spec
+
+
 def slugify(text: str, fallback: str = "ajan") -> str:
     folded = unicodedata.normalize("NFKD", text.translate(_TR))
     ascii_text = folded.encode("ascii", "ignore").decode("ascii").lower()
@@ -125,6 +171,7 @@ class OutputSpec(BaseModel):
     report: Literal["markdown"] = "markdown"
     artifacts: list[str] = Field(default_factory=lambda: ["json", "md", "svg"])
     notify: list[str] = Field(default_factory=list)
+    sections: list[str] = Field(default_factory=list)
 
 
 class VerificationSpec(BaseModel):

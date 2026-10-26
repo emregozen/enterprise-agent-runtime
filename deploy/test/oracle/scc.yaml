@@ -1,0 +1,9 @@
+# TEST-ONLY. gvenzl/oracle-free runs as the image UID (54321).
+# restricted-v2 assigns a random UID, and that UID cannot write /opt/oracle.
+# This binds anyuid to the dedicated ServiceAccount oracle-test/oracle and to nothing else.
+# Do not reuse this binding for agent-runtime, agent-runs, or a production database.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: oracle-anyuid-test-only, namespace: oracle-test}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: "system:openshift:scc:anyuid"}
+subjects: [{kind: ServiceAccount, name: oracle, namespace: oracle-test}]

@@ -275,6 +275,10 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
     if body.model_ref and not any(item["sensitivity"] == "restricted" for item in sources):
         spec["spec"]["model"]["class"] = body.model_ref
         spec = AgentSpec.model_validate(spec).canonical()
+    from shared.spec import apply_default_schedule
+
+    spec = apply_default_schedule(spec, body.description)
+    spec = AgentSpec.model_validate(spec).canonical()
     return {"spec": spec, "summary": spec_summary(spec)}
 
 

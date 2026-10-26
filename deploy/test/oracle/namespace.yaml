@@ -1,0 +1,49 @@
+# TEST-ONLY. Oracle Database Free for the connector test on CRC.
+# There is no PVC: a pod restart drops the data. Scale to 0 when the test is over:
+#   oc -n oracle-test scale deploy/oracle-free --replicas=0
+# The image can be pruned after that. Do not ship this namespace in a production install.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oracle-test
+  labels: {purpose: agent-runtime-test}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: oracle, namespace: oracle-test}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: oracle, namespace: oracle-test}
+spec:
+  selector: {app: oracle-free}
+  ports: [{name: sqlnet, port: 1521, targetPort: 1521}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: oracle-free, namespace: oracle-test}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: oracle-free}}
+  template:
+    metadata: {labels: {app: oracle-free}}
+    spec:
+      serviceAccountName: oracle
+      containers:
+      - name: oracle
+        image: docker.io/gvenzl/oracle-free:23-slim-faststart
+        ports: [{containerPort: 1521}]
+        env:
+        - {name: ORACLE_PASSWORD_FILE, value: /run/secrets/oracle/sys}
+        - {name: APP_USER, value: SALES_OWNER}
+        - {name: APP_USER_PASSWORD_FILE, value: /run/secrets/oracle/owner}
+        resources:
+          requests: {cpu: 100m, memory: 512Mi, ephemeral-storage: 1Gi}
+          limits: {cpu: 1500m, memory: 2304Mi, ephemeral-storage: 6Gi}
+        readinessProbe:
+          exec: {command: [healthcheck.sh]}
+          initialDelaySeconds: 20
+          periodSeconds: 10
+        volumeMounts: [{name: creds, mountPath: /run/secrets/oracle, readOnly: true}]
+      volumes: [{name: creds, secret: {secretName: oracle-creds}}]

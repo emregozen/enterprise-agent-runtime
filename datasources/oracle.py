@@ -45,23 +45,17 @@ class OracleSource:
         return result.sql
 
     def introspect(self, allow_tables: list[str] | None = None) -> SchemaCatalog:
-        tables = [item.upper() for item in (allow_tables or self.allow_tables)]
-        binds = ",".join(f":t{i}" for i in range(len(tables))) or "NULL"
-        sql = f"""
-            SELECT table_name, column_name, data_type, nullable
-            FROM user_tab_columns
-            WHERE table_name IN ({binds})
-            ORDER BY table_name, column_id
-        """
-        params = {f"t{i}": name for i, name in enumerate(tables)}
-        with self.conn.cursor() as cur:
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+        # A SELECT-only user sees nothing in USER_TAB_COLUMNS. Resolve the name
+        # through ALL_TABLES, ALL_VIEWS and ALL_SYNONYMS, then read ALL_TAB_COLUMNS.
         grouped: dict[str, list[ColumnInfo]] = {}
-        for table_name, column_name, data_type, nullable in rows:
-            grouped.setdefault(table_name, []).append(
-                ColumnInfo(name=column_name, type=data_type, nullable=(nullable == "Y"))
-            )
+        with self.conn.cursor() as cur:
+            for name in [item.upper() for item in (allow_tables or self.allow_tables)]:
+                owner, _, table = name.rpartition(".")
+                cur.execute(_COLUMNS_SQL, {"owner": owner or None, "name": table})
+                for column_name, data_type, nullable in cur.fetchall():
+                    grouped.setdefault(name, []).append(
+                        ColumnInfo(name=column_name, type=data_type, nullable=(nullable == "Y"))
+                    )
         return SchemaCatalog(
             dialect=self.dialect,
             tables=[TableInfo(name=name, columns=cols) for name, cols in grouped.items()],
@@ -119,6 +113,25 @@ class OracleSource:
             else:
                 writer.close()
         return FetchResult(row_count=count, columns=columns, parquet_path=str(destination))
+
+
+_COLUMNS_SQL = """
+    WITH target AS (
+        SELECT owner, table_name, 1 AS pref FROM all_tables
+        WHERE table_name = :name AND owner = NVL(:owner, USER)
+        UNION ALL
+        SELECT owner, view_name, 1 FROM all_views
+        WHERE view_name = :name AND owner = NVL(:owner, USER)
+        UNION ALL
+        SELECT table_owner, table_name, CASE owner WHEN USER THEN 2 ELSE 3 END FROM all_synonyms
+        WHERE :owner IS NULL AND synonym_name = :name AND owner IN (USER, 'PUBLIC')
+    ), pick AS (
+        SELECT owner, table_name FROM target ORDER BY pref FETCH FIRST 1 ROWS ONLY
+    )
+    SELECT c.column_name, c.data_type, c.nullable
+    FROM all_tab_columns c JOIN pick p ON c.owner = p.owner AND c.table_name = p.table_name
+    ORDER BY c.column_id
+"""
 
 
 def _oracle_frame_to_table(frame):

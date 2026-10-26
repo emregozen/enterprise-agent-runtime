@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from harness.sections import requested_sections
 from shared.code_templates import daily_code, simple_code
 from shared.spec import slugify
 
@@ -108,7 +109,12 @@ class FakeLLM:
                     "timeoutSeconds": 900,
                 },
                 "schedule": schedule,
-                "output": {"report": "markdown", "artifacts": ["json", "md", "svg"], "notify": tools},
+                "output": {
+                    "report": "markdown",
+                    "artifacts": ["json", "md", "svg"],
+                    "notify": tools,
+                    "sections": requested_sections(description),
+                },
                 "verification": {"crossCheckSql": True, "maxRepairRounds": 2, "numericTolerance": 1.0},
                 "dryRunRowLimit": 1000,
             },
@@ -151,7 +157,7 @@ class FakeLLM:
             "python": code,
             "params": params,
             "cross_checks": checks,
-            "report_template": _template(),
+            "report_template": _template(payload.get("required_sections") or []),
             "notify": notify,
             "notification": {
                 "tool": "send_email",
@@ -281,8 +287,8 @@ def _simple_sql(dialect: str, table: str, measure: str, dimension: str) -> tuple
     return sql, checks
 
 
-def _template() -> str:
-    return (
+def _template(required: list | None = None) -> str:
+    body = (
         "# Günlük satış özeti\n\n"
         "**Tarih:** {{yesterday}}\n\n"
         "**Genel toplam:** {{grand_total}}\n\n"
@@ -293,3 +299,11 @@ def _template() -> str:
         "{{anomaly_section}}\n\n"
         "Rakamlar veritabanındaki SQL ile üretildi ve pod içinde çalışan kodun çıktısından yazıldı.\n"
     )
+    folded = _fold(body)
+    extra = []
+    for title in required or []:
+        token = _fold(str(title))
+        if token and token not in folded:
+            extra.append(f"\n## {title}\n")
+            folded = f"{folded}\n{token}"
+    return body + "".join(extra)

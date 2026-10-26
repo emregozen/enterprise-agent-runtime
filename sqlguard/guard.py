@@ -79,6 +79,7 @@ def _direct_tables(select: exp.Select) -> list[exp.Table]:
 
 
 def _is_aggregate(select: exp.Select) -> bool:
+    """True only for aggregates of this SELECT, not a scalar subquery inside it."""
     if select.args.get("group"):
         return True
     for agg in select.find_all(exp.AggFunc):
@@ -87,14 +88,145 @@ def _is_aggregate(select: exp.Select) -> bool:
     return False
 
 
+def _literal_int(expression) -> int | None:
+    if isinstance(expression, exp.Literal) and not expression.is_string:
+        return int(expression.this)
+    return None
+
+
 def _limit_value(select: exp.Select) -> int | None:
+    fetch_limit = _fetch_limit(select)
+    rownum = _rownum_limit(select)
+    if fetch_limit is None:
+        return rownum
+    if rownum is None:
+        return fetch_limit
+    if fetch_limit < 0 or rownum < 0:
+        return -1
+    return min(fetch_limit, rownum)
+
+
+def _fetch_limit(select: exp.Select) -> int | None:
     limit = select.args.get("limit")
     if limit is None:
         return None
+    if isinstance(limit, exp.Fetch):
+        options = limit.args.get("limit_options")
+        if options is not None and (options.args.get("percent") or options.args.get("with_ties")):
+            return -1
+        count = _literal_int(limit.args.get("count"))
+        return count if count is not None else -1
     expression = limit.args.get("expression")
-    if isinstance(expression, exp.Literal) and not expression.is_string:
-        return int(expression.this)
-    return -1
+    count = _literal_int(expression)
+    return count if count is not None else -1
+
+
+def _is_rownum(expression) -> bool:
+    return isinstance(expression, exp.Column) and expression.name.lower() == "rownum"
+
+
+def _rownum_compare(node) -> int | None:
+    if not isinstance(node, (exp.LTE, exp.LT, exp.GTE, exp.GT, exp.EQ)):
+        return None
+    left, right = node.args.get("this"), node.args.get("expression")
+    if _is_rownum(left):
+        number = _literal_int(right)
+        if number is None:
+            return None
+        if isinstance(node, exp.LT):
+            return number - 1
+        if isinstance(node, exp.EQ):
+            return 1
+        return number
+    if _is_rownum(right):
+        number = _literal_int(left)
+        if number is None:
+            return None
+        if isinstance(node, exp.GT):
+            return number - 1
+        if isinstance(node, exp.EQ):
+            return 1
+        return number
+    return None
+
+
+def _rownum_limit(select: exp.Select) -> int | None:
+    """ROWNUM bound in a top-level AND. A bound inside OR does not limit every row."""
+    where = select.args.get("where")
+    if where is None:
+        return None
+    found: list[int] = []
+
+    def walk(node, under_or: bool) -> None:
+        if isinstance(node, exp.Or):
+            walk(node.this, True)
+            walk(node.expression, True)
+            return
+        if isinstance(node, exp.And):
+            walk(node.this, under_or)
+            walk(node.expression, under_or)
+            return
+        if isinstance(node, exp.Paren):
+            walk(node.this, under_or)
+            return
+        if under_or:
+            return
+        limit = _rownum_compare(node)
+        if limit is not None:
+            found.append(limit)
+
+    walk(where.this, False)
+    if not found:
+        return None
+    if any(item < 1 for item in found):
+        return -1
+    return min(found)
+
+
+def _cte_name(select: exp.Select) -> str | None:
+    parent = select.parent
+    if isinstance(parent, exp.CTE) and parent.this is select and parent.alias:
+        return parent.alias.lower()
+    return None
+
+
+def _bounded(statement: exp.Expression, select: exp.Select, max_limit: int, depth: int = 0) -> bool:
+    """True when this SELECT cannot leak an unlimited raw row set.
+
+    A raw CTE or derived table is bounded only when every SELECT that reads it is bounded.
+    """
+    if depth > 16:
+        return False
+    if _is_aggregate(select):
+        return True
+    limit = _limit_value(select)
+    if limit is not None and 1 <= limit <= max_limit:
+        return True
+    name = _cte_name(select)
+    if name:
+        readers = [
+            other
+            for other in statement.find_all(exp.Select)
+            if any(table.name.lower() == name and not table.db for table in _direct_tables(other))
+        ]
+        return bool(readers) and all(_bounded(statement, other, max_limit, depth + 1) for other in readers)
+    sub = select.parent
+    if isinstance(sub, exp.Subquery) and isinstance(sub.parent, (exp.From, exp.Join)):
+        outer = sub.parent.find_ancestor(exp.Select)
+        return outer is not None and _bounded(statement, outer, max_limit, depth + 1)
+    return False
+
+
+def _outer_selects(statement: exp.Expression) -> list[exp.Select]:
+    if isinstance(statement, exp.Union):
+        found: list[exp.Select] = []
+        for child in (statement.this, statement.expression):
+            if child is not None:
+                found.extend(_outer_selects(child))
+        return found
+    if isinstance(statement, exp.Select):
+        return [statement]
+    return []
 
 
 def _allowed(table: exp.Table, allow: set[str]) -> bool:
@@ -132,6 +264,7 @@ def guard_sql(sql: str, *, dialect: str, allow_tables: list[str], max_limit: int
             return GuardResult(False, raw, f"Yasak fonksiyon: {name}")
     allow = {item.lower() for item in allow_tables}
     tables: list[str] = []
+    outer_ids = {id(item) for item in _outer_selects(statement)}
     saw_aggregate = False
     for select in statement.find_all(exp.Select):
         if select.args.get("into"):
@@ -149,12 +282,16 @@ def guard_sql(sql: str, *, dialect: str, allow_tables: list[str], max_limit: int
             if not _allowed(table, allow):
                 return GuardResult(False, raw, f"Tablo izinli değil: {table.name}")
             tables.append(table.name.lower())
-        if _is_aggregate(select):
+        if id(select) in outer_ids and _is_aggregate(select):
             saw_aggregate = True
+        if _is_aggregate(select):
+            continue
+        if _bounded(statement, select, max_limit):
             continue
         limit = _limit_value(select)
         if limit is None:
-            return GuardResult(False, raw, "Ham SELECT için LIMIT zorunlu; agregasyon yok")
+            where = f" (CTE {_cte_name(select)})" if _cte_name(select) else ""
+            return GuardResult(False, raw, f"Ham SELECT için LIMIT zorunlu; agregasyon yok{where}")
         if limit < 1 or limit > max_limit:
             return GuardResult(False, raw, f"LIMIT 1 ile {max_limit} arasında olmalı")
     if not tables:

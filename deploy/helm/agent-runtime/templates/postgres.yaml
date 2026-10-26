@@ -78,10 +78,16 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/pgsql/data
+            - name: dshm
+              mountPath: /dev/shm
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: postgres-data
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.postgres.shmSize | quote }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

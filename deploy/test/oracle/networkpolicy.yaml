@@ -1,0 +1,12 @@
+# TEST-ONLY. Lets agent run pods reach the temporary Oracle on 1521.
+# Apply this only after the agent-runs namespace exists. Remove it with the test:
+#   oc -n agent-runs delete networkpolicy agent-run-egress-oracle-test
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: agent-run-egress-oracle-test, namespace: agent-runs, labels: {purpose: agent-runtime-test}}
+spec:
+  podSelector: {matchLabels: {app: agent-run}}
+  policyTypes: [Egress]
+  egress:
+  - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: oracle-test}}, podSelector: {matchLabels: {app: oracle-free}}}]
+    ports: [{protocol: TCP, port: 1521}]

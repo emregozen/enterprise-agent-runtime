@@ -84,3 +84,14 @@ def test_deepseek_values_use_existing_secret_and_private_exceptions():
     assert "10.0.0.0/8" in blocks[0]["except"]
     master = next(doc for doc in docs if doc.get("kind") == "Secret" and doc["metadata"]["name"] == "agent-runtime-master-key")
     assert master["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+
+
+def test_postgres_shm_is_a_memory_volume():
+    docs = _render()
+    postgres = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "postgres")
+    spec = postgres["spec"]["template"]["spec"]
+    mount = next(item for item in spec["containers"][0]["volumeMounts"] if item["mountPath"] == "/dev/shm")
+    assert mount["name"] == "dshm"
+    volume = next(item for item in spec["volumes"] if item["name"] == "dshm")
+    assert volume["emptyDir"]["medium"] == "Memory"
+    assert volume["emptyDir"]["sizeLimit"] == "256Mi"

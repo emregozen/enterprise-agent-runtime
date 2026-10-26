@@ -122,7 +122,8 @@ def _assert_sources(db: Session, spec: dict) -> None:
         row = find_datasource(db, ref["ref"])
         if row is None or not row.enabled:
             raise ServiceError(f"veri kaynağı yok: {ref['ref']}", 400)
-        unknown = [table for table in ref["allowTables"] if table not in set(row.allow_tables)]
+        allowed = {str(table).lower() for table in row.allow_tables}
+        unknown = [table for table in ref["allowTables"] if str(table).lower() not in allowed]
         if unknown:
             raise ServiceError(f"{ref['ref']} için tablo izinli değil: {', '.join(unknown)}", 400)
         sensitivities.append(row.sensitivity)
