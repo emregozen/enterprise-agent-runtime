@@ -32,6 +32,12 @@ helm upgrade --install agent-runtime deploy/helm/agent-runtime \
   -f deploy/helm/agent-runtime/values-crc.yaml \
   -f deploy/helm/agent-runtime/values-crc-small.yaml \
   -f deploy/helm/agent-runtime/values-crc-deepseek.yaml
+# Etiket aynı kaldıysa Helm pod şablonunu değiştirmez ve eski imaj çalışmaya devam eder.
+# values-crc imageTriggers açar: derleme ImageStream etiketine yeni bir özet yazınca
+# control-plane ve ui kendiliğinden yenilenir. Tetikleyici yoksa derleme adını verin
+# veya podları elle çevirin:
+# helm upgrade ... --set imageBuildId="$(oc get builds -n agent-runtime -o jsonpath='{.items[-1:].metadata.name}')"
+# oc rollout restart deploy/control-plane deploy/ui -n agent-runtime
 oc get secret agent-runtime-master-key -n agent-runtime
 oc get deploy control-plane -n agent-runtime -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LLM_K8S_SECRET_NAME")].value}{"\n"}'
 ```

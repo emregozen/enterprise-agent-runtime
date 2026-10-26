@@ -304,6 +304,6 @@ def _template(required: list | None = None) -> str:
     for title in required or []:
         token = _fold(str(title))
         if token and token not in folded:
-            extra.append(f"\n## {title}\n")
+            extra.append(f"\n## {title}\n\nToplam {{{{grand_total}}}}.\n")
             folded = f"{folded}\n{token}"
     return body + "".join(extra)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from shared.report import report_sections, section_has_substance
 from shared.spec import fold_tr
 
 _RULES: tuple[tuple[tuple[str, ...], str, tuple[str, ...]], ...] = (
@@ -31,11 +32,18 @@ def requested_sections(goal: str, spec: dict | None = None) -> list[str]:
 
 
 def missing_sections(report: str, sections: list[str]) -> list[str]:
-    folded = fold_tr(report or "")
+    """A heading that only points at another table does not cover the section."""
     aliases = {title: alias for _keys, title, alias in _RULES}
+    blocks = report_sections(report or "")
     missing = []
     for title in sections:
         tokens = aliases.get(title) or (fold_tr(title),)
-        if not any(token in folded for token in tokens):
+        covered = False
+        for heading, body in blocks:
+            blob = fold_tr(heading)
+            if any(token in blob for token in tokens) and section_has_substance(body):
+                covered = True
+                break
+        if not covered:
             missing.append(title)
     return missing

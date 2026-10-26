@@ -12,6 +12,8 @@ Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir
 
 Rapor tablosundaki sapma yüzdeleri aynı biçimde yazılır (`0,00%` ve `300,00%`). Model çağrısı gecikme ve jeton sayısını günlüğe yazar. Akıl yürütme (`reasoning_effort`) isteğe bağlıdır ve varsayılan kapalıdır.
 
+Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketiyle yapılan yükseltme podu yenilemez; CRC değerleri ImageStream tetikleyicisi kullanır, gerekirse `imageBuildId` veya `oc rollout restart`. Ulaşılamayan veri kaynağı sihirbazda Türkçe bir 502 döner. Rapor ham satır dökümünü ve yalnızca yukarıyı gösteren bölümleri yazmaz.
+
 Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
 
 Arayüz sol menülü bir yönetim konsoludur. Açık ve koyu tema vardır. Yazı tipleri ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.

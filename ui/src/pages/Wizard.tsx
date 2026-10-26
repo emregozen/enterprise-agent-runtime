@@ -8,6 +8,17 @@ type Spec = Record<string, unknown>;
 
 const STEPS = ["Açıklama", "Kaynak ve model", "Spec", "Zamanlama", "Onay"];
 
+function draftError(exc: unknown): string {
+  if (exc instanceof ApiError) {
+    if (exc.message && !/internal server error/i.test(exc.message)) return exc.message;
+    if (exc.status === 502 || exc.status >= 500) {
+      return "Veri kaynağına ulaşılamadı. Kaynak kapalı olabilir veya adres yanıt vermiyor.";
+    }
+    return exc.message || "taslak olmadı";
+  }
+  return "taslak olmadı";
+}
+
 export function Wizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
@@ -45,7 +56,7 @@ export function Wizard() {
       setSpecText(JSON.stringify(draft.spec, null, 2));
       setStep(2);
     } catch (exc) {
-      setError(exc instanceof ApiError ? exc.message : "taslak olmadı");
+      setError(draftError(exc));
     } finally {
       setBusy(false);
     }

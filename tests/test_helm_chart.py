@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -84,6 +85,22 @@ def test_deepseek_values_use_existing_secret_and_private_exceptions():
     assert "10.0.0.0/8" in blocks[0]["except"]
     master = next(doc for doc in docs if doc.get("kind") == "Secret" and doc["metadata"]["name"] == "agent-runtime-master-key")
     assert master["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"
+
+
+def test_postgres_recreates_and_image_changes_roll_the_workloads():
+    docs = _render()
+    postgres = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "postgres")
+    assert postgres["spec"]["strategy"]["type"] == "Recreate"
+    for name, container in (("control-plane", "control-plane"), ("ui", "ui")):
+        deploy = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == name)
+        raw = deploy["spec"]["template"]["metadata"]["annotations"]["image.openshift.io/triggers"]
+        triggers = json.loads(raw)
+        assert triggers[0]["from"]["kind"] == "ImageStreamTag"
+        assert triggers[0]["from"]["namespace"] == "agent-runtime"
+        assert container in triggers[0]["fieldPath"]
+    rolled = _render("--set", "imageBuildId=build-9")
+    ui = next(doc for doc in rolled if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "ui")
+    assert ui["spec"]["template"]["metadata"]["annotations"]["agent-runtime.internal/image-build"] == "build-9"
 
 
 def test_postgres_shm_is_a_memory_volume():

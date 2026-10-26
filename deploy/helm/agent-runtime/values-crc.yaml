@@ -1,5 +1,6 @@
 imageRegistry: image-registry.openshift-image-registry.svc:5000/agent-runtime
 imagePullPolicy: Always
+imageTriggers: true
 grantImagePuller: true
 runBackend: kubernetes
 route:

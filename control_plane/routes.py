@@ -607,20 +607,34 @@ def _live_catalog(row: DataSourceRecord) -> dict:
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     if not dsn:
-        raise HTTPException(500, f"{row.dsn_env} tanımlı değil")
-    source = open_source(
-        row.dialect,
-        dsn,
-        allow_tables=list(row.allow_tables),
-        statement_timeout_ms=settings.sql_statement_timeout_ms,
-        max_limit=settings.sql_max_limit,
-    )
+        raise HTTPException(400, f"{row.name} veri kaynağının adresi tanımlı değil")
+    source = None
     try:
+        source = open_source(
+            row.dialect,
+            dsn,
+            allow_tables=list(row.allow_tables),
+            statement_timeout_ms=settings.sql_statement_timeout_ms,
+            max_limit=settings.sql_max_limit,
+        )
         return source.introspect(list(row.allow_tables)).as_dict()
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(502, f"şema okunamadı: {exc}") from exc
+        raise HTTPException(502, _source_unreachable(row)) from exc
     finally:
-        source.close()
+        if source is not None:
+            try:
+                source.close()
+            except Exception:
+                pass
+
+
+def _source_unreachable(row: DataSourceRecord) -> str:
+    return (
+        f"{row.name} veri kaynağına ulaşılamadı. "
+        "Kaynak kapalı olabilir veya adres yanıt vermiyor."
+    )
 
 
 def _source_or_404(db: Session, datasource_id: uuid.UUID) -> DataSourceRecord:

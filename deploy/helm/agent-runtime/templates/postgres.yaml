@@ -19,6 +19,9 @@ metadata:
   namespace: {{ .Values.namespace }}
 spec:
   replicas: 1
+  # One writer on the RWO data volume. RollingUpdate briefly ran two Postgres pods.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres

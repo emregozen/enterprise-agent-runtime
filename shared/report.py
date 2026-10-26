@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from shared.spec import fold_tr
+
 
 def format_number(value) -> str:
     if value is None:
@@ -34,6 +36,9 @@ _TR_ALPHABET = "abcçdefgğhıijklmnoöprsştuüvyz"
 _TR_RANK = {char: index for index, char in enumerate(_TR_ALPHABET)}
 _REGION_BASE = {"region", "yesterday_amount", "baseline_daily", "deviation_pct", "sale_count"}
 _SHOWN_KEYS = {"yesterday", "grand_total", "sale_count", "regions", "anomalies"}
+_MAX_TABLE_ROWS = 15
+_RAW_KEYS = {"rows", "raw", "raw_rows", "records", "preview", "dump", "detail_rows", "all_rows"}
+_POINTER = re.compile(r"yukari|asagi|bkz|bakin|tabloda|ustte|yukarda")
 
 
 def turkish_sort_key(text: str) -> tuple:
@@ -101,6 +106,7 @@ def compose_report(template: str, output: dict, checks: list[dict] | None = None
     extra = _extra_stats(output, body)
     if extra:
         body = f"{body}\n\n{extra}"
+    body = tighten_report(body)
     return _replace_verification(body, checks or []).rstrip() + "\n"
 
 
@@ -120,6 +126,8 @@ def _extra_stats(output: dict, already: str) -> str:
                     chunks.append(block)
             continue
         if key in _SHOWN_KEYS:
+            continue
+        if isinstance(value, list) and (len(value) > _MAX_TABLE_ROWS or key.lower() in _RAW_KEYS):
             continue
         block = _render_block(key, value)
         if block and not _values_shown(already, value if isinstance(value, list) else [value], None):
@@ -179,6 +187,145 @@ def _plain(value) -> str:
     if value is None:
         return "—"
     return str(value)
+
+
+def tighten_report(body: str) -> str:
+    """Drop raw dumps, repeated region tables, and sections that only point upward."""
+    sections = _split_sections(body)
+    cleaned = []
+    for heading, text in sections:
+        text = _drop_long_tables(text)
+        cleaned.append((heading, text))
+    cleaned = _drop_redundant_tables(cleaned)
+    kept = []
+    for heading, text in cleaned:
+        text = _drop_pointer_lines(text)
+        if heading and not _section_has_substance(text):
+            continue
+        kept.append((heading, text))
+    return _join_sections(kept).rstrip() + "\n"
+
+
+def report_sections(body: str) -> list[tuple[str, str]]:
+    return _split_sections(body)
+
+
+def section_has_substance(body: str) -> bool:
+    return _section_has_substance(body)
+
+
+def _split_sections(body: str) -> list[tuple[str, str]]:
+    sections: list[tuple[str, str]] = []
+    heading = ""
+    chunk: list[str] = []
+    for line in body.splitlines():
+        if re.match(r"^#{1,3}[ \t]+\S", line) and chunk:
+            sections.append((heading, "\n".join(chunk).strip()))
+            heading = line
+            chunk = []
+            continue
+        if re.match(r"^#{1,3}[ \t]+\S", line) and not chunk:
+            heading = line
+            continue
+        chunk.append(line)
+    sections.append((heading, "\n".join(chunk).strip()))
+    return sections
+
+
+def _join_sections(sections: list[tuple[str, str]]) -> str:
+    parts = []
+    for heading, text in sections:
+        block = "\n\n".join(part for part in (heading.strip(), text.strip()) if part)
+        if block:
+            parts.append(block)
+    return "\n\n".join(parts)
+
+
+def _markdown_tables(text: str) -> list[tuple[str, list[list[str]]]]:
+    found = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        if not lines[index].lstrip().startswith("|"):
+            index += 1
+            continue
+        start = index
+        while index < len(lines) and lines[index].lstrip().startswith("|"):
+            index += 1
+        block = "\n".join(lines[start:index])
+        rows = []
+        for line in lines[start:index]:
+            rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+        if len(rows) >= 2 and _is_separator(rows[1]):
+            data = rows[2:]
+        else:
+            data = rows[1:]
+        found.append((block, data))
+    return found
+
+
+def _is_separator(cells: list[str]) -> bool:
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells if cell)
+
+
+def _drop_long_tables(text: str) -> str:
+    for block, data in _markdown_tables(text):
+        if len(data) > _MAX_TABLE_ROWS:
+            text = text.replace(block, "")
+    return text
+
+
+def _numeric_tokens(text: str) -> set[str]:
+    return set(re.findall(r"\d+(?:[.\s]\d{3})*(?:,\d+)?", text))
+
+
+def _drop_redundant_tables(sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    located: list[tuple[int, str, frozenset[str], set[str]]] = []
+    for index, (_heading, text) in enumerate(sections):
+        for block, data in _markdown_tables(text):
+            labels = frozenset(row[0].strip().lower() for row in data if row and row[0].strip())
+            located.append((index, block, labels, _numeric_tokens(block)))
+    drop: set[tuple[int, str]] = set()
+    for left, (index, block, labels, numbers) in enumerate(located):
+        for right, (_other, _block, other_labels, other_numbers) in enumerate(located):
+            if left == right or not labels or labels != other_labels:
+                continue
+            if numbers < other_numbers or (numbers == other_numbers and left > right):
+                drop.add((index, block))
+    result = []
+    for index, (heading, text) in enumerate(sections):
+        for other, block in drop:
+            if other == index:
+                text = text.replace(block, "")
+        result.append((heading, text))
+    return result
+
+
+def _is_pointer_line(line: str) -> bool:
+    folded = fold_tr(line)
+    if not _POINTER.search(folded):
+        return False
+    without_count = re.sub(r"\d+\s*satir", "", folded)
+    return not re.search(r"\d", without_count)
+
+
+def _drop_pointer_lines(text: str) -> str:
+    kept = [line for line in text.splitlines() if not _is_pointer_line(line)]
+    return "\n".join(kept).strip()
+
+
+def _section_has_substance(body: str) -> bool:
+    text = body.strip()
+    if not text:
+        return False
+    if any(line.lstrip().startswith("|") for line in text.splitlines()):
+        return True
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    return not all(_is_pointer_line(line) for line in lines)
 
 
 def verification_markdown(checks: list[dict]) -> str:

@@ -25,6 +25,7 @@ spec:
     metadata:
       labels:
         app: ui
+      {{- include "agent-runtime.podAnnotations" (dict "root" . "container" "ui" "image" .Values.uiImage) | nindent 6 }}
     spec:
       securityContext:
         runAsNonRoot: true

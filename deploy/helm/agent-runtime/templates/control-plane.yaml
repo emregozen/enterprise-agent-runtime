@@ -33,6 +33,7 @@ spec:
     metadata:
       labels:
         app: control-plane
+      {{- include "agent-runtime.podAnnotations" (dict "root" . "container" "control-plane" "image" .Values.runtimeImage) | nindent 6 }}
     spec:
       serviceAccountName: agent-controller
       securityContext:

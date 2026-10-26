@@ -15,6 +15,27 @@ from control_plane.service import claim_due
 from shared.config import get_settings
 
 
+def test_draft_says_when_the_source_is_down(datasource, monkeypatch):
+    def down(*_args, **_kwargs):
+        raise OSError("DPY-6005 cannot connect")
+
+    monkeypatch.setattr("control_plane.routes.open_source", down)
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/builder/draft",
+            json={
+                "description": "Satışları bölge bazında özetle",
+                "owner": "finans",
+                "datasource_refs": ["postgres-sales"],
+            },
+        )
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert "postgres-sales veri kaynağına ulaşılamadı" in detail
+    assert "kapalı olabilir" in detail
+    assert "DPY-6005" not in detail
+
+
 def test_builder_and_run_registry(datasource):
     set_backend(RecordingBackend())
     with TestClient(create_app()) as client:

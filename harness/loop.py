@@ -31,7 +31,8 @@ The JSON schema is:
 output.json must contain grand_total (number), sale_count (integer), regions (list), anomalies (list), yesterday.
 Python must compute numbers from the parquet file. Never hard-code totals from memory.
 Every item in required_sections must be a markdown heading in report_template, and the SQL plus python must compute that section. Do not drop a requested monthly breakdown, top-N list, or other section. Keep a single SELECT statement: extra aggregates go in that statement, in CTEs that only an aggregating query reads, or in one UNION ALL.
-Any extra number you write to output.json (median, p95, monthly rows, top 5) must also have a placeholder or heading in report_template. The runtime appends leftovers, but the heading still has to be yours.
+Each required section has its own short table or list, at most 15 rows, with the numbers for that section. Do not paste the raw result (no 90-row dump). Do not repeat the region table or the anomaly list under a second heading. Do not write a section that only says the figures are in a table above.
+Any extra number you write to output.json (median, p95, monthly rows, top 5) must also have a placeholder or heading in report_template. The runtime keeps a short leftover such as median or p95 and drops raw dumps and duplicate tables.
 Do not write a Doğrulama section that tells the reader to cross-check. The runtime replaces that section with the actual pass or fail and the numbers.
 SQL dialect is given in the user payload. PostgreSQL uses ::float8 and LIMIT. Oracle uses CAST, not LIMIT.
 For a raw Oracle export use FETCH FIRST n ROWS ONLY or WHERE ROWNUM <= n. FETCH FIRST n PERCENT and WITH TIES are rejected.
