@@ -30,7 +30,7 @@ export function Shell() {
   const navigate = useNavigate();
   const [mode, setMode] = useState("…");
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
-  const [palette, setPalette] = useState(false);
+  const [palette, setPalette] = useState(() => new URLSearchParams(location.search).get("palette") === "1");
   useEffect(() => {
     api<{ llm_mode: string }>("/api/settings").then((body) => setMode(body.llm_mode)).catch(() => setMode(copy.offline));
   }, []);

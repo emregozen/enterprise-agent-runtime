@@ -72,10 +72,12 @@ export function AgentDetail() {
       </div>
       {tab === "overview" && (
         <section className="grid-2">
-          <article className="card">
+          <article className="card goal-card">
             <h2>Goal</h2>
-            <textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} />
-            <button className="btn" type="button" style={{ marginTop: 10 }} onClick={() => void saveGoal()}>Save as a new version</button>
+            <textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Goal" />
+            <div className="goal-actions">
+              <button className="btn" type="button" onClick={() => void saveGoal()}>Save as a new version</button>
+            </div>
           </article>
           <article className="card">
             <h2>Schedule</h2>

@@ -92,11 +92,21 @@ export function RunDetail() {
           </div>
         </article>
         <article className="card">
+          <h2>Report</h2>
+          <div className="report-pane">
+            {run.report_markdown ? <Markdown text={run.report_markdown} /> : <p>No report was written.</p>}
+          </div>
+        </article>
+      </section>
+      <section className="grid-2">
+        <article className="card">
           <h2>Cross-check</h2>
           {(run.summary.cross_checks || []).length === 0 && <p>No records.</p>}
           {(run.summary.cross_checks || []).map((check) => (
             <p key={check.name}><Badge status={check.ok ? "succeeded" : "failed"} /> {check.name}: SQL {String(check.sql_value ?? "—")} / code {String(check.code_value ?? check.error ?? "—")}</p>
           ))}
+        </article>
+        <article className="card">
           <h2>Model calls</h2>
           {(run.summary.llm_calls || []).length === 0 && <p>This run has no token record.</p>}
           {(run.summary.llm_calls || []).map((call, index) => (
@@ -107,10 +117,6 @@ export function RunDetail() {
       <section className="grid-2">
         <article className="card"><h2>SQL</h2>{sql ? <CodeBlock code={sql} /> : <p>The plan step has no SQL.</p>}</article>
         <article className="card"><h2>Code</h2><CodeBlock code={JSON.stringify(codeStep?.detail || {}, null, 2)} /></article>
-      </section>
-      <section className="card">
-        <h2>Report</h2>
-        {run.report_markdown ? <Markdown text={run.report_markdown} /> : <p>No report was written.</p>}
       </section>
       <section className="card">
         <h2>Artifacts</h2>
