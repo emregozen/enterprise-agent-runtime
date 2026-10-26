@@ -127,7 +127,7 @@ def _extra_stats(output: dict, already: str) -> str:
             continue
         if key in _SHOWN_KEYS:
             continue
-        if isinstance(value, list) and (len(value) > _MAX_TABLE_ROWS or key.lower() in _RAW_KEYS):
+        if isinstance(value, list) and (not value or len(value) > _MAX_TABLE_ROWS or key.lower() in _RAW_KEYS):
             continue
         block = _render_block(key, value)
         if block and not _values_shown(already, value if isinstance(value, list) else [value], None):
@@ -278,7 +278,13 @@ def _drop_long_tables(text: str) -> str:
 
 
 def _numeric_tokens(text: str) -> set[str]:
-    return set(re.findall(r"\d+(?:[.\s]\d{3})*(?:,\d+)?", text))
+    # "3.914" and "3914", "0,13 %" and "0,13%" are the same number in two renderings.
+    found = re.findall(r"\d+(?:[.\s]\d{3})*(?:,\d+)?", text)
+    return {re.sub(r"[.\s]", "", token) for token in found}
+
+
+def _data_tokens(data: list[list[str]]) -> set[str]:
+    return _numeric_tokens("\n".join(" | ".join(row) for row in data))
 
 
 def _drop_redundant_tables(sections: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -286,7 +292,7 @@ def _drop_redundant_tables(sections: list[tuple[str, str]]) -> list[tuple[str, s
     for index, (_heading, text) in enumerate(sections):
         for block, data in _markdown_tables(text):
             labels = frozenset(row[0].strip().lower() for row in data if row and row[0].strip())
-            located.append((index, block, labels, _numeric_tokens(block)))
+            located.append((index, block, labels, _data_tokens(data)))
     drop: set[tuple[int, str]] = set()
     for left, (index, block, labels, numbers) in enumerate(located):
         for right, (_other, _block, other_labels, other_numbers) in enumerate(located):
@@ -294,6 +300,14 @@ def _drop_redundant_tables(sections: list[tuple[str, str]]) -> list[tuple[str, s
                 continue
             if numbers < other_numbers or (numbers == other_numbers and left > right):
                 drop.add((index, block))
+    # A later table whose labels and numbers were all already written above repeats them.
+    for index, block, labels, numbers in located:
+        if (index, block) in drop or not labels or not numbers:
+            continue
+        before = "\n".join(f"{heading}\n{text}" for heading, text in sections[:index])
+        before += "\n" + sections[index][1].split(block, 1)[0]
+        if numbers <= _numeric_tokens(before) and all(label in before.lower() for label in labels):
+            drop.add((index, block))
     result = []
     for index, (heading, text) in enumerate(sections):
         for other, block in drop:

@@ -19,6 +19,7 @@ kind: Deployment
 metadata:
   name: control-plane
   namespace: {{ .Values.namespace }}
+  {{- include "agent-runtime.deploymentAnnotations" (dict "root" . "container" "control-plane" "image" .Values.runtimeImage) | nindent 2 }}
 spec:
   replicas: {{ .Values.controlPlane.replicas }}
   {{- if eq .Values.artifacts.store "pvc" }}
@@ -104,6 +105,12 @@ spec:
                 secretKeyRef:
                   name: agent-runtime-master-key
                   key: key
+            - name: CONFIG_MASTER_KEY_OLD
+              valueFrom:
+                secretKeyRef:
+                  name: agent-runtime-master-key
+                  key: previous
+                  optional: true
             - name: LLM_MODEL_CLASSES
               value: {{ .Values.llm.modelClasses | quote }}
             - name: RUN_BACKEND

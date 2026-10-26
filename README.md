@@ -12,7 +12,9 @@ Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir
 
 Rapor tablosundaki sapma yüzdeleri aynı biçimde yazılır (`0,00%` ve `300,00%`). Model çağrısı gecikme ve jeton sayısını günlüğe yazar. Akıl yürütme (`reasoning_effort`) isteğe bağlıdır ve varsayılan kapalıdır.
 
-Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketiyle yapılan yükseltme podu yenilemez; CRC değerleri ImageStream tetikleyicisi kullanır, gerekirse `imageBuildId` veya `oc rollout restart`. Ulaşılamayan veri kaynağı sihirbazda Türkçe bir 502 döner. Rapor ham satır dökümünü ve yalnızca yukarıyı gösteren bölümleri yazmaz.
+Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketinde OpenShift tetikleyicisi Deployment metadata’sındadır; pod şablonuna konursa derleme podu yenilemez. Ulaşılamayan veri kaynağı sihirbazda Türkçe bir 502 döner. Rapor, aynı sayıları başka biçimde tekrarlayan tabloyu ve boş liste bölümünü yazmaz.
+
+Master key döndürme `python -m control_plane.rotate_master_key` ile yapılır. Güncel anahtar `CONFIG_MASTER_KEY`, eskisi `CONFIG_MASTER_KEY_OLD` olur. `helm get manifest` çıktısından `agent-runtime-master-key` Secret’ı ayıklanır; anahtar düz metin basılır. Adımlar kontrol listesindedir.
 
 Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
 

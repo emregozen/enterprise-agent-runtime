@@ -16,6 +16,7 @@ kind: Deployment
 metadata:
   name: ui
   namespace: {{ .Values.namespace }}
+  {{- include "agent-runtime.deploymentAnnotations" (dict "root" . "container" "ui" "image" .Values.uiImage) | nindent 2 }}
 spec:
   replicas: {{ .Values.ui.replicas }}
   selector:

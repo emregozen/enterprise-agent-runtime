@@ -10,9 +10,10 @@ runtimeImage: agent-runtime-py312:0.2.0
 uiImage: agent-runtime-ui:0.2.0
 imagePullPolicy: IfNotPresent
 # Same tag does not change a Deployment, so Helm will not roll pods after a rebuild.
-# Set this to the new build name (or any new value) when you upgrade.
+# Set this to the new build name (or any new value) when you upgrade. It lands on the pod template.
 imageBuildId: ""
-# OpenShift only. When true, a new ImageStream digest rolls control-plane and ui.
+# OpenShift only. When true, the Deployment metadata (not the pod template) gets
+# image.openshift.io/triggers, and a new ImageStream digest rolls control-plane and ui.
 imageTriggers: false
 grantImagePuller: false
 

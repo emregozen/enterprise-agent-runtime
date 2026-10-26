@@ -15,3 +15,6 @@ stringData:
   {{- else }}
   key: {{ randAlphaNum 48 | quote }}
   {{- end }}
+  {{- if and $existing (index $existing.data "previous") }}
+  previous: {{ index $existing.data "previous" | b64dec | quote }}
+  {{- end }}

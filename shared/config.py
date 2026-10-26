@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     llm_temperature: float = 0
     llm_reasoning_effort: str = ""
     config_master_key: str = ""
+    # Comma-separated previous keys. Decrypt tries these after the current key. Encrypt uses the current key.
+    config_master_key_old: str = ""
 
     run_backend: str = "local"
     control_plane_public_url: str = "http://127.0.0.1:8841"

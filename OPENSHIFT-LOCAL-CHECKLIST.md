@@ -33,9 +33,10 @@ helm upgrade --install agent-runtime deploy/helm/agent-runtime \
   -f deploy/helm/agent-runtime/values-crc-small.yaml \
   -f deploy/helm/agent-runtime/values-crc-deepseek.yaml
 # Etiket aynı kaldıysa Helm pod şablonunu değiştirmez ve eski imaj çalışmaya devam eder.
-# values-crc imageTriggers açar: derleme ImageStream etiketine yeni bir özet yazınca
-# control-plane ve ui kendiliğinden yenilenir. Tetikleyici yoksa derleme adını verin
-# veya podları elle çevirin:
+# values-crc imageTriggers açar. Tetikleyici Deployment'ın kendi metadata'sındadır;
+# pod şablonuna konursa OpenShift derlemeden sonra podu yenilemez. Doğru yerdeyse
+# UI ve runtime derlemesi yaklaşık bir dakika içinde podları çevirir.
+# Tetikleyici yoksa derleme adını verin veya podları elle çevirin:
 # helm upgrade ... --set imageBuildId="$(oc get builds -n agent-runtime -o jsonpath='{.items[-1:].metadata.name}')"
 # oc rollout restart deploy/control-plane deploy/ui -n agent-runtime
 oc get secret agent-runtime-master-key -n agent-runtime
@@ -58,6 +59,40 @@ Aralık, pod içeri alınırken okunur. Çalışan pod eski UID ile kalır; anno
 Beklenen: master-key Secret’ı `key` alanını taşır. Son satır `llm-deepseek` olur. Kontrol düzlemi ilk açılışta bu Secret’ı veritabanına bir model olarak tohumlar; anahtarın kendisini satıra kopyalamaz, koşum aynı Secret adını kullanır. Arayüz kabı statik dosyayı küçük bir süreçle sunar. İstek `values-crc-small.yaml` içindeki düşük değerdir.
 
 DeepSeek dosyasını eklemezseniz model kipi `fake` kalır. Çıkış kuralı `values-crc-deepseek.yaml` içindedir: genel `443`, özel aralıklar hariç. Üretimde bu kuralı EgressFirewall veya çıkış vekiliyle değiştirin.
+
+`helm get manifest` ve `helm diff` çıktısı `agent-runtime-master-key` Secret'ını düz metin basar. Bu blok paylaşılmadan veya kaydedilmeden önce ayıklanır:
+
+```bash
+helm get manifest agent-runtime -n agent-runtime | awk '
+  function flush() { if (block != "" && block !~ /name: agent-runtime-master-key/) printf "%s", block }
+  /^---$/ { flush(); block = $0 ORS; next }
+  { block = block $0 ORS }
+  END { flush() }
+'
+```
+
+`helm diff` aynı Secret’ı bir hunk olarak gösterirse o hunk kopyalanmaz. Anahtar değeri içeren satır sohbete veya bilete yapışmaz.
+
+### Master key döndürme
+
+Veritabanındaki parola ve API anahtarı `CONFIG_MASTER_KEY` ile Fernet’tir. Yeni anahtar, eskisi `CONFIG_MASTER_KEY_OLD` iken çözülür; şifreleme hep güncel anahtarla yapılır (`MultiFernet`). Anahtar komut satırı argümanına yazılmaz, dosyadan Secret’a girer. Dosyalar iş bitince silinir.
+
+```bash
+umask 077
+oc get secret agent-runtime-master-key -n agent-runtime -o jsonpath='{.data.key}' | base64 -d > /tmp/old-key
+python -c 'from cryptography.fernet import Fernet; open("/tmp/new-key","w").write(Fernet.generate_key().decode())'
+oc -n agent-runtime create secret generic agent-runtime-master-key \
+  --from-file=key=/tmp/new-key --from-file=previous=/tmp/old-key \
+  --dry-run=client -o yaml | oc apply -f -
+oc rollout restart deploy/control-plane -n agent-runtime
+oc rollout status deploy/control-plane -n agent-runtime
+oc exec -n agent-runtime deploy/control-plane -- python -m control_plane.rotate_master_key
+oc -n agent-runtime patch secret agent-runtime-master-key --type=json -p '[{"op":"remove","path":"/data/previous"}]'
+oc rollout restart deploy/control-plane -n agent-runtime
+rm -f /tmp/old-key /tmp/new-key
+```
+
+Beklenen son satır: `yeniden şifrelenen alan: N`. `N` sıfırsa kayıtlı parola yoktur. Çözülemedi derse `previous` eski anahtar değildir; Secret’ı yedekten geri koyun, podu yeniden başlatın. Döndürme bitmeden `helm upgrade` çalışırsa chart, Secret’ta duran `previous` alanını yerinde bırakır. Alan silindikten sonraki upgrade onu geri getirmez.
 
 ## 1. Küme ayakta
 

@@ -14,16 +14,20 @@
 {{- end -}}
 {{- end -}}
 
+{{- /* OpenShift reads image triggers from the Deployment's own metadata, not the pod template. */ -}}
+{{- define "agent-runtime.deploymentAnnotations" -}}
+{{- $root := .root -}}
+{{- if $root.Values.imageTriggers }}
+annotations:
+  image.openshift.io/triggers: {{ include "agent-runtime.imageTrigger" (dict "image" .image "namespace" $root.Values.namespace "container" .container) | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "agent-runtime.podAnnotations" -}}
 {{- $root := .root -}}
-{{- if or $root.Values.imageTriggers $root.Values.imageBuildId }}
+{{- if $root.Values.imageBuildId }}
 annotations:
-  {{- if $root.Values.imageTriggers }}
-  image.openshift.io/triggers: {{ include "agent-runtime.imageTrigger" (dict "image" .image "namespace" $root.Values.namespace "container" .container) | quote }}
-  {{- end }}
-  {{- if $root.Values.imageBuildId }}
   agent-runtime.internal/image-build: {{ $root.Values.imageBuildId | quote }}
-  {{- end }}
 {{- end }}
 {{- end -}}
 

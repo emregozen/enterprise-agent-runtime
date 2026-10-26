@@ -6,27 +6,47 @@ import base64
 import hashlib
 import logging
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
 _log = logging.getLogger("crypto")
 _warned = False
 
 
-def _fernet() -> Fernet:
-    global _warned
+def _material(raw: str) -> bytes:
+    text = raw.strip()
+    try:
+        Fernet(text.encode())
+        return text.encode()
+    except Exception:
+        digest = hashlib.sha256(text.encode()).digest()
+        return base64.urlsafe_b64encode(digest)
+
+
+def master_key_values() -> list[str]:
+    """Current key first, then previous keys. The first key is the one we encrypt with."""
     from shared.config import get_settings
 
-    raw = (get_settings().config_master_key or "").strip()
-    if not raw:
-        raw = "dev-only-master-key"
+    settings = get_settings()
+    current = (settings.config_master_key or "").strip()
+    previous = [part.strip() for part in (settings.config_master_key_old or "").split(",") if part.strip()]
+    keys: list[str] = []
+    if current:
+        keys.append(current)
+    for key in previous:
+        if key not in keys:
+            keys.append(key)
+    return keys
+
+
+def _fernet() -> MultiFernet:
+    global _warned
+    keys = master_key_values()
+    if not keys:
+        keys = ["dev-only-master-key"]
         if not _warned:
             _log.warning("CONFIG_MASTER_KEY boş; geliştirme anahtarı kullanılıyor")
             _warned = True
-    try:
-        return Fernet(raw.encode())
-    except Exception:
-        digest = hashlib.sha256(raw.encode()).digest()
-        return Fernet(base64.urlsafe_b64encode(digest))
+    return MultiFernet([Fernet(_material(key)) for key in keys])
 
 
 def encrypt_secret(value: str) -> str:

@@ -123,3 +123,26 @@ def test_failed_verification_states_the_numbers():
     assert "SQL 10" in report
     assert "kod 1" in report
     assert "**kaldı**" in report
+
+
+def test_tighten_drops_a_table_repeating_numbers_in_another_format():
+    from shared.report import tighten_report
+
+    report = (
+        "## Bölge\n\n| Bölge | Ciro | Sapma |\n| --- | ---: | ---: |\n"
+        "| Marmara | 3.914 | 0,13 % |\n| Ege | 1.200 | 2,50 % |\n\n"
+        "### region table\n\n| Bölge | 7 günlük ciro | Sapma |\n| --- | ---: | ---: |\n"
+        "| Marmara | 3914 | 0,13% |\n| Ege | 1200 | 2,50% |\n"
+    )
+    out = tighten_report(report)
+    assert out.count("Marmara") == 1
+    assert "3.914" in out
+
+
+def test_empty_list_does_not_become_a_stub_section():
+    report = compose_report(
+        "## Özet\n{{grand_total}}\n",
+        {"grand_total": 1, "sale_count": 0, "regions": [], "anomalies": [], "monthly": []},
+        [],
+    )
+    assert "_Satır yok._" not in report

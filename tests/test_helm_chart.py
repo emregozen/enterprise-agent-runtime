@@ -93,11 +93,17 @@ def test_postgres_recreates_and_image_changes_roll_the_workloads():
     assert postgres["spec"]["strategy"]["type"] == "Recreate"
     for name, container in (("control-plane", "control-plane"), ("ui", "ui")):
         deploy = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == name)
-        raw = deploy["spec"]["template"]["metadata"]["annotations"]["image.openshift.io/triggers"]
+        raw = deploy["metadata"]["annotations"]["image.openshift.io/triggers"]
+        assert "image.openshift.io/triggers" not in (deploy["spec"]["template"]["metadata"].get("annotations") or {})
         triggers = json.loads(raw)
         assert triggers[0]["from"]["kind"] == "ImageStreamTag"
         assert triggers[0]["from"]["namespace"] == "agent-runtime"
         assert container in triggers[0]["fieldPath"]
+        if name == "control-plane":
+            env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
+            old = next(item for item in env if item["name"] == "CONFIG_MASTER_KEY_OLD")
+            assert old["valueFrom"]["secretKeyRef"]["key"] == "previous"
+            assert old["valueFrom"]["secretKeyRef"]["optional"] is True
     rolled = _render("--set", "imageBuildId=build-9")
     ui = next(doc for doc in rolled if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "ui")
     assert ui["spec"]["template"]["metadata"]["annotations"]["agent-runtime.internal/image-build"] == "build-9"
