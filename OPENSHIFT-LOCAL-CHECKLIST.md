@@ -6,7 +6,18 @@ Ayrıntılı kurulum kök `README.md` içindedir. Bu dosya yalnızca doğrulamad
 
 ## 0. Kurulu kümeyi yükseltme
 
-`6adb025` veya `be4709e` zaten duruyorsa imajları yeniden derleyip chart’ı yükseltin. Yayın ad alanı chart’ta yazılmaz. `agent-runtime-master-key` Secret’ını silmeyin; yoksa şifreli parolalar okunamaz.
+`6adb025` chart’ı yayın ad alanı `agent-runtime`i bir Namespace kaynağı olarak release’e yazıyordu. `be4709e` ve sonrası bu kaynağı chart’tan çıkardı; yoksa `helm install --create-namespace` sahiplik yüzünden duruyordu. Chart’tan çıkan kaynak `helm upgrade` sırasında silinir. Bu, ad alanının kendisini siler: Secret’lar, BuildConfig’ler, ImageStream’ler ve Helm release geçmişi birlikte gider. “İmajı deriyip helm upgrade yeter” bu eski kurulum için yanlıştır.
+
+Yükseltmeden önce, ad alanı hâlâ duruyorsa:
+
+```bash
+oc annotate ns agent-runtime helm.sh/resource-policy=keep --overwrite
+oc get secret agent-runtime-master-key -n agent-runtime -o yaml > /tmp/agent-runtime-master-key.yaml
+```
+
+`keep` Helm’in ad alanını silmesini durdurur. Master key yedeği, ad alanı yine de giderse şifreli parolaların okunabilmesi içindir. Secret üzerindeki `helm.sh/resource-policy: keep` Helm uninstall’da Secret’ı bırakır; ad alanı silinirse Kubernetes Secret’ı yine de siler.
+
+Sonra imajları ve chart’ı yükseltin:
 
 ```bash
 oc get ns agent-runtime >/dev/null 2>&1 || oc new-project agent-runtime
@@ -25,7 +36,20 @@ oc get secret agent-runtime-master-key -n agent-runtime
 oc get deploy control-plane -n agent-runtime -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LLM_K8S_SECRET_NAME")].value}{"\n"}'
 ```
 
-Beklenen: master-key Secret’ı `key` alanını taşır. Son satır `llm-deepseek` olur. Kontrol düzlemi ilk açılışta bu Secret’ı veritabanına bir model olarak tohumlar; anahtarın kendisini satıra kopyalamaz, koşum aynı Secret adını kullanır. Arayüz kabı artık Next önbelleği tutmaz; statik dosyayı küçük bir süreç sunar. İstek `values-crc-small.yaml` içindeki düşük değerdir.
+Ad alanı yükseltmede silindiyse toparlama (CRC’de kullanılan yol):
+
+1. `oc new-project agent-runtime` ile ad alanını yeniden açın. BuildConfig ve ImageStream gittiği için imaj derlemesini yukarıdan tekrarlayın. Master key yedeği varsa `oc apply -f /tmp/agent-runtime-master-key.yaml` ile geri koyun. Yedek yoksa veritabanındaki parolalar ve API anahtarları çözülemez; arayüzden yeniden yazılır.
+2. Disk `Retain` kaldıysa PV durur, PVC gitmiştir. PV `Released` ise aynı ada yeni PVC bağlanmadan önce claim silinir: `oc patch pv <pv> --type=json -p '[{"op":"remove","path":"/spec/claimRef"}]'`. Chart’ın PVC adları `postgres-data` ve `artifacts`tır. Aynı adla yeniden oluşunca disk yeniden bağlanır.
+3. Postgres verisi eski projenin UID’sine aittir. Yeni projenin UID aralığı farklıdır. restricted-v2 kök init kabına ve `chown` yetkisine izin vermez. `fsGroup` dizini grup yazılır yapar ama Postgres sahip UID’si süreç UID’si değilse açılmaz. Pod kabul edilmeden önce eski aralığı yazın (eski değer `oc get ns` çıktısında veya silindiyse `ls -nd` ile diskteki sahip UID’nin düştüğü aralıktır):
+
+```bash
+oc annotate ns agent-runtime openshift.io/sa.scc.uid-range='<eski-aralık>' --overwrite
+oc delete pod -n agent-runtime -l app=postgres --force --grace-period=0
+```
+
+Aralık, pod içeri alınırken okunur. Çalışan pod eski UID ile kalır; annotation’dan sonra podu silin.
+
+Beklenen: master-key Secret’ı `key` alanını taşır. Son satır `llm-deepseek` olur. Kontrol düzlemi ilk açılışta bu Secret’ı veritabanına bir model olarak tohumlar; anahtarın kendisini satıra kopyalamaz, koşum aynı Secret adını kullanır. Arayüz kabı statik dosyayı küçük bir süreçle sunar. İstek `values-crc-small.yaml` içindeki düşük değerdir.
 
 DeepSeek dosyasını eklemezseniz model kipi `fake` kalır. Çıkış kuralı `values-crc-deepseek.yaml` içindedir: genel `443`, özel aralıklar hariç. Üretimde bu kuralı EgressFirewall veya çıkış vekiliyle değiştirin.
 

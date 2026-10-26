@@ -2,6 +2,11 @@
 The release namespace is created by Helm (--create-namespace). Declaring it here
 as well makes install fail: Helm already created the namespace without ownership
 labels, then refuses to adopt this manifest.
+
+Do not add it back to "fix" upgrades. Older revisions (through 6adb025) rendered
+this Namespace. Removing it from the chart makes `helm upgrade` delete the live
+namespace unless it is annotated helm.sh/resource-policy=keep first. See
+OPENSHIFT-LOCAL-CHECKLIST.md section 0.
 */}}
 {{- if .Values.createNamespaces }}
 apiVersion: v1

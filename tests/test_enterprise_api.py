@@ -33,7 +33,7 @@ def test_sources_models_and_agent_lifecycle(datasource, db):
             body = created.json()
             assert body["password_set"] is True
             assert "password" not in body
-            assert body["password_hint"] == "••••ntrt"
+            assert body["password_hint"] == "••••"
             source_id = body["id"]
             tested = client.post(f"/api/datasources/{source_id}/test")
             assert tested.status_code == 200, tested.text
@@ -90,7 +90,13 @@ def test_sources_models_and_agent_lifecycle(datasource, db):
             spec["spec"]["goal"] = spec["spec"]["goal"] + " Kısa tut."
             edited = client.patch(f"/api/agents/{agent_id}", json={"spec": spec, "publish": True})
             assert edited.status_code == 200, edited.text
-            assert edited.json()["version"] == 2
+            edited_body = edited.json()
+            assert edited_body["version"] == 2
+            assert edited_body["current_version"] == 2
+            assert edited_body["versions"][0]["version"] == 2
+            assert edited_body["spec"]["metadata"]["version"] == 2
+            fetched = client.get(f"/api/agents/{agent_id}")
+            assert fetched.json()["versions"] == edited_body["versions"]
             diff = client.get(f"/api/agents/{agent_id}/diff", params={"left": 1, "right": 2})
             assert diff.status_code == 200
             assert "Kısa tut" in diff.json()["diff"]
@@ -106,6 +112,9 @@ def test_sources_models_and_agent_lifecycle(datasource, db):
             assert client.delete(f"/api/agents/{agent_id}").status_code == 204
             names = [item["name"] for item in client.get("/api/agents").json()]
             assert agent.json()["name"] not in names
+            refused = client.post(f"/api/agents/{agent_id}/runs", json={})
+            assert refused.status_code == 409
+            assert refused.json()["detail"] == "silinmiş ajan çalıştırılamaz"
             board = client.get("/api/dashboard")
             assert board.status_code == 200
             assert "tokens_today" in board.json()

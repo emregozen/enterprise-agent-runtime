@@ -175,6 +175,8 @@ def published_spec(db: Session, agent: Agent) -> tuple[int, dict]:
 
 
 def trigger_run(db: Session, agent: Agent, *, trigger: str, dry_run: bool, actor: str) -> tuple[Run, str]:
+    if agent.status == "deleted":
+        raise ServiceError("silinmiş ajan çalıştırılamaz", 409)
     if dry_run:
         version_row = (
             db.query(AgentVersion).filter(AgentVersion.agent_id == agent.id).order_by(AgentVersion.version.desc()).first()

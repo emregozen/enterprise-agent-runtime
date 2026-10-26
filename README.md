@@ -235,7 +235,7 @@ oc get pods -n agent-runtime
 oc get pods -n agent-runs
 ```
 
-`--create-namespace` yayın ad alanı `agent-runtime`i açar. Chart bu ad alanını bir daha yazmaz; yazsaydı Helm sahiplik yüzünden kurulumu durdururdu. Chart yalnızca koşum ad alanı `agent-runs`i açar. Kontrol düzlemi Job ve Secret’ı oraya koyar. Postgres adresi `postgres.agent-runtime.svc.cluster.local` olur, böylece koşum ad alanından da çözülür. `ARTIFACT_STORE=pvc` iken kontrol düzlemi `Recreate` ile kalkar. Run podunun imajı çekebilmesi için `agent-runs` hizmet hesabına `system:image-puller` bağlanır (`grantImagePuller`).
+`--create-namespace` yayın ad alanı `agent-runtime`i açar. Chart bu ad alanını bir daha yazmaz; yazsaydı Helm sahiplik yüzünden kurulumu durdururdu. Eski chart (`6adb025`) ad alanını release’e koyuyordu. O kurulumdan yükseltmeden önce `oc annotate ns agent-runtime helm.sh/resource-policy=keep --overwrite` gerekir; yoksa `helm upgrade` ad alanını ve içindeki Secret, derleme ve release kaydını siler. Toparlama adımları `OPENSHIFT-LOCAL-CHECKLIST.md` bölüm 0’dadır. Chart yalnızca koşum ad alanı `agent-runs`i açar. Kontrol düzlemi Job ve Secret’ı oraya koyar. Postgres adresi `postgres.agent-runtime.svc.cluster.local` olur, böylece koşum ad alanından da çözülür. `ARTIFACT_STORE=pvc` iken kontrol düzlemi `Recreate` ile kalkar. Run podunun imajı çekebilmesi için `agent-runs` hizmet hesabına `system:image-puller` bağlanır (`grantImagePuller`).
 
 LLM kümenin dışındaysa çıkış kapalıdır. `values-crc.yaml` içine ekleyip yeniden kurun:
 

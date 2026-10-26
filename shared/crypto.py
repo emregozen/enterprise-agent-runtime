@@ -45,9 +45,22 @@ def decrypt_secret(token: str) -> str:
 
 
 def secret_hint(value: str) -> str:
+    """Mask a stored secret. Last four characters only for long API keys."""
     if not value:
         return ""
-    return f"••••{value[-4:]}"
+    if len(value) > 20:
+        return f"••••{value[-4:]}"
+    return "••••"
+
+
+def public_hint(ciphertext: str, stored: str = "") -> str:
+    """Hint for an API response. Never returns a stored suffix of a short secret."""
+    if ciphertext:
+        try:
+            return secret_hint(decrypt_secret(ciphertext))
+        except Exception:
+            return "••••"
+    return "••••" if stored else ""
 
 
 def redact(text: str, secrets: list[str]) -> str:

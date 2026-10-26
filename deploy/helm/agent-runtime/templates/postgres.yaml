@@ -27,6 +27,10 @@ spec:
       labels:
         app: postgres
     spec:
+      # restricted-v2 forbids a root initContainer, and Postgres refuses a data
+      # directory owned by another UID even when fsGroup makes it group-writable.
+      # After a namespace recreate, set openshift.io/sa.scc.uid-range to the old
+      # project range before this pod is admitted. See the CRC checklist.
       securityContext:
         runAsNonRoot: true
         seccompProfile:

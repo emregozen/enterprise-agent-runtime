@@ -82,4 +82,5 @@ def test_deepseek_values_use_existing_secret_and_private_exceptions():
                 blocks.append(target["ipBlock"])
     assert blocks[0]["cidr"] == "0.0.0.0/0"
     assert "10.0.0.0/8" in blocks[0]["except"]
-    assert any(doc.get("kind") == "Secret" and doc["metadata"]["name"] == "agent-runtime-master-key" for doc in docs)
+    master = next(doc for doc in docs if doc.get("kind") == "Secret" and doc["metadata"]["name"] == "agent-runtime-master-key")
+    assert master["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep"

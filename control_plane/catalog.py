@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from control_plane.models import Agent, AgentVersion, Artifact, DataSourceRecord, LlmCall, LlmProvider, Run, RunStep, Schedule, ToolCall, utcnow
 from control_plane.policy import local_day_start
-from shared.crypto import decrypt_secret, encrypt_secret, redact, secret_hint
+from shared.crypto import decrypt_secret, encrypt_secret, public_hint, redact, secret_hint
 
 
 def find_datasource(db: Session, ref: str) -> DataSourceRecord | None:
@@ -52,7 +52,7 @@ def datasource_out(row: DataSourceRecord) -> dict:
         "database_name": row.database_name or "",
         "username": row.username or "",
         "password_set": bool(row.password_ciphertext),
-        "password_hint": row.password_hint or "",
+        "password_hint": public_hint(row.password_ciphertext, row.password_hint),
         "options": row.options or {},
         "read_only": bool(row.read_only),
         "configured": configured,
@@ -176,7 +176,7 @@ def provider_out(row: LlmProvider) -> dict:
         "base_url": row.base_url,
         "model": row.model,
         "api_key_set": bool(row.api_key_ciphertext or row.k8s_secret_name),
-        "api_key_hint": row.api_key_hint or "",
+        "api_key_hint": public_hint(row.api_key_ciphertext, row.api_key_hint),
         "k8s_secret_name": row.k8s_secret_name,
         "k8s_secret_key": row.k8s_secret_key,
         "temperature": row.temperature,

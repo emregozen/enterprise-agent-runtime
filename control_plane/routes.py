@@ -301,9 +301,8 @@ def post_agent(body: AgentIn, db: Session = Depends(get_db)):
     return agent_out(agent, schedule, goal=body.spec.get("spec", {}).get("goal"))
 
 
-@public.get("/agents/{agent_id}")
-def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
-    agent = _agent_or_404(db, agent_id)
+def _agent_detail(db: Session, agent: Agent) -> dict:
+    db.refresh(agent)
     schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
     versions = (
         db.query(AgentVersion).filter(AgentVersion.agent_id == agent.id).order_by(AgentVersion.version.desc()).all()
@@ -312,11 +311,17 @@ def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
     return {
         **agent_out(agent, schedule, goal=(current or {}).get("spec", {}).get("goal", agent.description)),
         "spec": current,
+        "version": agent.current_version,
         "versions": [
             {"version": row.version, "status": row.status, "created_at": row.created_at.isoformat(), "spec": row.spec}
             for row in versions
         ],
     }
+
+
+@public.get("/agents/{agent_id}")
+def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+    return _agent_detail(db, _agent_or_404(db, agent_id))
 
 
 @public.post("/agents/{agent_id}/versions", status_code=201)
@@ -773,13 +778,12 @@ def patch_agent(agent_id: uuid.UUID, body: AgentPatch, db: Session = Depends(get
         agent.owner = body.owner
     if body.spec is None:
         db.commit()
-        schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
-        return agent_out(agent, schedule)
+        return _agent_detail(db, agent)
     try:
-        row = add_version(db, agent, body.spec, publish=body.publish, actor="ui")
+        add_version(db, agent, body.spec, publish=body.publish, actor="ui")
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
-    return {"version": row.version, "status": row.status, "spec": row.spec}
+    return _agent_detail(db, agent)
 
 
 @public.post("/agents/{agent_id}/duplicate", status_code=201)
