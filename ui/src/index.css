@@ -252,6 +252,8 @@ table.data th button { background: none; border: 0; padding: 0; color: inherit; 
   border: 1px solid rgba(228, 194, 122, 0.18);
 }
 .dark .code { background: #0c0b10; }
+.code .tok-keyword { color: #e4c27a; }
+.code .tok-string { color: #9eb6ff; }
 .skeleton { height: 14px; border-radius: 8px; background: linear-gradient(90deg, var(--line), color-mix(in srgb, var(--gold) 25%, transparent), var(--line)); background-size: 200% 100%; animation: shine 1.2s linear infinite; }
 @keyframes shine { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .empty { color: var(--muted); padding: 36px 12px; text-align: center; display: grid; justify-items: center; gap: 6px; }

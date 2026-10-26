@@ -67,15 +67,15 @@ export function Dashboard() {
         <article className="card">
           <h2>Runs by outcome</h2>
           <div className="chart-box">
-            <ResponsiveContainer>
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 480, height: 240 }}>
               <BarChart data={chart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" stroke="var(--muted)" />
                 <YAxis allowDecimals={false} stroke="var(--muted)" />
                 <Tooltip />
-                <Bar dataKey="succeeded" stackId="a" fill="#1d7a4d" name="Succeeded" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="failed" stackId="a" fill="#9d2c3a" name="Failed" />
-                <Bar dataKey="needs_review" stackId="a" fill="#c48a2e" name="Needs review" />
+                <Bar dataKey="succeeded" stackId="a" fill="#1d7a4d" name="Succeeded" isAnimationActive={false} />
+                <Bar dataKey="failed" stackId="a" fill="#9d2c3a" name="Failed" isAnimationActive={false} />
+                <Bar dataKey="needs_review" stackId="a" fill="#c48a2e" name="Needs review" isAnimationActive={false} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -83,13 +83,13 @@ export function Dashboard() {
         <article className="card">
           <h2>Duration trend</h2>
           <div className="chart-box">
-            <ResponsiveContainer>
+            <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 480, height: 240 }}>
               <LineChart data={chart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" stroke="var(--muted)" />
                 <YAxis stroke="var(--muted)" />
                 <Tooltip />
-                <Line type="monotone" dataKey="avg_duration" stroke="#c48a2e" name="Seconds" connectNulls strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="avg_duration" stroke="#c48a2e" name="Seconds" connectNulls strokeWidth={2} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

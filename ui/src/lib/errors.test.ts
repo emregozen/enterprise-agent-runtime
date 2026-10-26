@@ -12,6 +12,9 @@ describe("presentText", () => {
       "günlük koşum limiti doldu",
       "taslak üretilemedi: timeout",
       "OpenBao ve HashiCorp Vault henüz bağlı değil. Sağlayıcı kaydı durur; KV okuma sonraki sürümde eklenecek.",
+      "plan doğrulanamadı",
+      "satır sayısı çapraz kontrolü tutmadı",
+      "SQL çapraz kontrolü tutmadı: row_count",
     ];
     for (const sample of samples) {
       const shown = presentText(sample);

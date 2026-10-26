@@ -12,6 +12,7 @@ import { Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { copy } from "../lib/copy";
 import { statusLabel } from "../lib/format";
+import { codeTokens } from "../lib/highlight";
 
 export function Badge({ status }: { status: string }) {
   const tone = status === "succeeded" || status === "published" ? "ok"
@@ -137,15 +138,14 @@ export function useSearch<T>(rows: T[], pick: (row: T) => string, query: string)
   }, [rows, pick, query]);
 }
 
-const SQL = /\b(SELECT|FROM|WHERE|GROUP|BY|ORDER|LIMIT|AND|OR|AS|JOIN|ON|CAST)\b/g;
-
 export function CodeBlock({ code }: { code: string }) {
-  const html = code
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(SQL, "<span style=\"color:#e4c27a\">$1</span>")
-    .replace(/(['"])(?:\\.|(?!\1).)*\1/g, "<span style=\"color:#9eb6ff\">$&</span>");
-  return <pre className="code" dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <pre className="code">
+      {codeTokens(code).map((token, index) =>
+        token.kind === "text" ? token.text : <span key={index} className={`tok-${token.kind}`}>{token.text}</span>,
+      )}
+    </pre>
+  );
 }
 
 export function Markdown({ text }: { text: string }) {

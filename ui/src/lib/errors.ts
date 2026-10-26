@@ -114,6 +114,25 @@ const EXACT: Record<string, string> = {
     "Proof of concept: run pods may leave only for DNS, the control plane, Postgres, and Helm extraEgress rules. NetworkPolicy cannot select a DNS name. In production use an EgressFirewall or an egress proxy. Example: deploy/openshift/egressfirewall.example.yaml.",
   "istek başarısız": "Request failed",
   "Fark yok.": "No difference.",
+  "plan doğrulanamadı": "The plan could not be validated",
+  "satır sayısı çapraz kontrolü tutmadı": "The row-count cross-check did not match",
+  "kullanıcı iptal etti": "Cancelled by the user",
+  "doğrulama tamamlanamadı": "Verification did not finish",
+  "SQL reddedildi": "The SQL was rejected",
+  "kod çalışmadı": "The code did not run",
+  "çapraz kontrol sorgusu tanımlı değil": "No cross-check query is defined",
+  "kısıtlı veri bulutu modeline gidemez": "Restricted data cannot be sent to a cloud model",
+  "SQL boş": "The SQL is empty",
+  "SQL 20000 karakterden uzun": "The SQL is longer than 20000 characters",
+  "SQL geçersiz karakter içeriyor": "The SQL contains a character that is not allowed",
+  "Yalnızca tek bir ifade çalıştırılabilir": "Only a single statement can run",
+  "Yalnızca SELECT sorgularına izin verilir": "Only SELECT queries are allowed",
+  "SELECT INTO yasak": "SELECT INTO is not allowed",
+  "FOR UPDATE/SHARE yasak": "FOR UPDATE/SHARE is not allowed",
+  "Sorguda izinli bir tablo yok": "The query does not use an allowed table",
+  "executor henüz ayakta değil": "The executor is not ready yet",
+  "Job bitti ama harness rapor yazmadı": "The Job finished without a harness report",
+  "Kubernetes Job başarısız oldu (backoffLimit=0)": "The Kubernetes Job failed (backoffLimit=0)",
 };
 
 const PATTERNS: Array<[RegExp, string]> = [
@@ -136,6 +155,16 @@ const PATTERNS: Array<[RegExp, string]> = [
   [/^Conjur değişkeni okunamadı \(HTTP (\d+)\)\. Host'un bu değişkeni okuma izni olmayabilir\.$/, "Could not read the Conjur variable (HTTP $1). The host may not be allowed to read it."],
   [/^Conjur kimlik doğrulaması başarısız \(HTTP (\d+)\)\.$/, "Conjur authentication failed (HTTP $1)."],
   [/^CyberArk CCP isteği reddedildi \(HTTP (\d+)\)\. AppID, Safe veya istemci sertifikası kabul edilmedi\.$/, "CyberArk CCP rejected the request (HTTP $1). The AppID, Safe, or client certificate was not accepted."],
+  [/^sorgu maliyeti eşiği aştı: (.+)$/, "The query cost is over the limit: $1"],
+  [/^raporda eksik bölüm: (.+)$/, "The report is missing a section: $1"],
+  [/^SQL çapraz kontrolü tutmadı: (.+)$/, "The SQL cross-check did not match: $1"],
+  [/^SQL ayrıştırılamadı: (.+)$/, "The SQL could not be parsed: $1"],
+  [/^Yasak ifade: (.+)$/, "Forbidden statement: $1"],
+  [/^Yasak fonksiyon: (.+)$/, "Forbidden function: $1"],
+  [/^Tablo izinli değil: (.+)$/, "Table is not allowed: $1"],
+  [/^Ham SELECT için LIMIT zorunlu; agregasyon yok(.*)$/, "A raw SELECT needs a LIMIT; there is no aggregation$1"],
+  [/^LIMIT 1 ile (\d+) arasında olmalı$/, "LIMIT must be between 1 and $1"],
+  [/^harness çıktı kodu (\d+); tamamlanma raporu yazılmadı$/, "Harness exited with code $1 and did not write a completion report"],
 ];
 
 export function presentText(value: string | null | undefined): string {
