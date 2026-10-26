@@ -6,24 +6,24 @@ type Source = { id: string; name: string; dialect: string };
 type Model = { id: string; name: string; model: string; is_default: boolean };
 type Spec = Record<string, unknown>;
 
-const STEPS = ["Açıklama", "Kaynak ve model", "Spec", "Zamanlama", "Onay"];
+const STEPS = ["Description", "Source and model", "Spec", "Schedule", "Review"];
 
 function draftError(exc: unknown): string {
   if (exc instanceof ApiError) {
     if (exc.message && !/internal server error/i.test(exc.message)) return exc.message;
     if (exc.status === 502 || exc.status >= 500) {
-      return "Veri kaynağına ulaşılamadı. Kaynak kapalı olabilir veya adres yanıt vermiyor.";
+      return "The data source is unreachable. It may be down, or the address is not responding.";
     }
-    return exc.message || "taslak olmadı";
+    return exc.message || "Could not draft a spec";
   }
-  return "taslak olmadı";
+  return "Could not draft a spec";
 }
 
 export function Wizard() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-  const [description, setDescription] = useState("Hafta içi her sabah dünkü satışları bölge bazında özetle, sapmaları açıkla ve finans@sirket.local adresine e-posta gönder.");
-  const [owner, setOwner] = useState("finans");
+  const [description, setDescription] = useState("Each weekday morning, summarize yesterday's sales by region, explain the outliers, and email finance@company.example.");
+  const [owner, setOwner] = useState("finance");
   const [sources, setSources] = useState<Source[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [sourceId, setSourceId] = useState("");
@@ -66,7 +66,7 @@ export function Wizard() {
     try {
       return JSON.parse(specText) as Spec;
     } catch {
-      setError("Spec JSON değil");
+      setError("The spec is not valid JSON");
       return null;
     }
   }
@@ -90,7 +90,7 @@ export function Wizard() {
       const created = await api<{ id: string }>("/api/agents", { method: "POST", body: JSON.stringify({ spec: body, publish: true }) });
       navigate(`/agents/${created.id}`);
     } catch (exc) {
-      setError(exc instanceof ApiError ? exc.message : "yayınlanamadı");
+      setError(exc instanceof ApiError ? exc.message : "Could not publish");
     } finally {
       setBusy(false);
     }
@@ -103,56 +103,57 @@ export function Wizard() {
     <>
       <div className="page-head">
         <div>
-          <h1>Yeni ajan</h1>
-          <p>Açıklama, veri kaynağı ve modelden bir spec üretilir. Yayınlamadan önce düzenleyebilirsiniz.</p>
+          <p className="eyebrow">Builder</p>
+          <h1>New agent</h1>
+          <p>A description, a data source, and a model produce a spec. Edit it before you publish. Turkish descriptions are accepted.</p>
         </div>
       </div>
-      <div className="stepper" aria-label="Adımlar">
+      <div className="stepper" aria-label="Steps">
         {STEPS.map((label, index) => <span key={label} className={index === step ? "on" : ""}>{index + 1}. {label}</span>)}
       </div>
       <section className="card">
         {step === 0 && (
           <div className="grid-2">
-            <label className="field">Sahip<input value={owner} onChange={(event) => setOwner(event.target.value)} /></label>
-            <label className="field" style={{ gridColumn: "1 / -1" }}>Ne yapmalı?<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+            <label className="field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} /></label>
+            <label className="field" style={{ gridColumn: "1 / -1" }}>What should it do?<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           </div>
         )}
         {step === 1 && (
           <div className="grid-2">
-            <label className="field">Veri kaynağı
+            <label className="field">Data source
               <select value={sourceId} onChange={(event) => setSourceId(event.target.value)}>
                 {sources.map((source) => <option key={source.id} value={source.id}>{source.name} · {source.dialect}</option>)}
               </select>
             </label>
             <label className="field">Model
               <select value={modelRef} onChange={(event) => setModelRef(event.target.value)}>
-                <option value="">Ortam varsayılanı</option>
+                <option value="">Environment default</option>
                 {models.map((model) => <option key={model.id} value={model.name}>{model.name} · {model.model}</option>)}
               </select>
             </label>
-            {sources.length === 0 && <p>Önce bir veri kaynağı tanımlayın.</p>}
+            {sources.length === 0 && <p>Define a data source first.</p>}
           </div>
         )}
         {step === 2 && (
-          <label className="field">Üretilen spec
+          <label className="field">Generated spec
             <textarea rows={16} value={specText} onChange={(event) => setSpecText(event.target.value)} spellCheck={false} />
           </label>
         )}
         {step === 3 && (
           <div>
             <div className="grid-2">
-              <label className="field">Mod
+              <label className="field">Mode
                 <select value={schedule?.mode || "manual"} onChange={(event) => updateSchedule(event.target.value, schedule?.cron || "30 8 * * 1-5")}>
-                  <option value="manual">Elle</option>
-                  <option value="cron">Zamanlı</option>
-                  <option value="hybrid">Zamanlı + kendi kararı</option>
-                  <option value="self">Kendi kararı</option>
+                  <option value="manual">Manual</option>
+                  <option value="cron">Scheduled</option>
+                  <option value="hybrid">Scheduled, plus its own decision</option>
+                  <option value="self">Its own decision</option>
                 </select>
               </label>
               <label className="field">Cron<input value={schedule?.cron || ""} onChange={(event) => updateSchedule(schedule?.mode || "cron", event.target.value)} /></label>
             </div>
             {(!schedule?.mode || schedule.mode === "manual") && (
-              <p>Açıklamada saat yoksa taslak elle kalır. Zamanı siz yazın; sihirbaz saat uydurmaz.</p>
+              <p>If the description names no time, the draft stays manual. Write the time yourself. The builder does not invent one.</p>
             )}
           </div>
         )}
@@ -165,12 +166,12 @@ export function Wizard() {
         )}
         {error && <p role="alert">{error}</p>}
         <div className="row" style={{ marginTop: 16 }}>
-          {step > 0 && <button className="btn-ghost" type="button" onClick={() => setStep(step - 1)}>Geri</button>}
-          {step === 0 && <button className="btn" type="button" onClick={() => setStep(1)}>Devam</button>}
-          {step === 1 && <button className="btn" type="button" disabled={busy || !sourceId} onClick={() => void generate()}>{busy ? "Üretiliyor…" : "Spec üret"}</button>}
-          {step === 2 && <button className="btn" type="button" onClick={() => setStep(3)}>Zamanlama</button>}
-          {step === 3 && <button className="btn" type="button" onClick={() => setStep(4)}>Önizleme</button>}
-          {step === 4 && <button className="btn" type="button" disabled={busy} onClick={() => void publish()}>{busy ? "Yayınlanıyor…" : "Yayınla"}</button>}
+          {step > 0 && <button className="btn-ghost" type="button" onClick={() => setStep(step - 1)}>Back</button>}
+          {step === 0 && <button className="btn" type="button" onClick={() => setStep(1)}>Continue</button>}
+          {step === 1 && <button className="btn" type="button" disabled={busy || !sourceId} onClick={() => void generate()}>{busy ? "Drafting…" : "Draft spec"}</button>}
+          {step === 2 && <button className="btn" type="button" onClick={() => setStep(3)}>Schedule</button>}
+          {step === 3 && <button className="btn" type="button" onClick={() => setStep(4)}>Review</button>}
+          {step === 4 && <button className="btn" type="button" disabled={busy} onClick={() => void publish()}>{busy ? "Publishing…" : "Publish"}</button>}
         </div>
       </section>
     </>

@@ -8,7 +8,9 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { useMemo, useState, type ReactNode } from "react";
+import { Sparkles } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { copy } from "../lib/copy";
 import { statusLabel } from "../lib/format";
 
 export function Badge({ status }: { status: string }) {
@@ -20,6 +22,13 @@ export function Badge({ status }: { status: string }) {
 }
 
 export function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div className="modal-back" role="presentation" onMouseDown={onClose}>
       <div className="modal" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
@@ -30,18 +39,20 @@ export function Modal({ title, children, onClose }: { title: string; children: R
   );
 }
 
-export function Empty({ title, body }: { title: string; body: string }) {
+export function Empty({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
   return (
     <div className="empty">
+      <div className="empty-mark" aria-hidden><Sparkles size={22} /></div>
       <strong>{title}</strong>
       <p>{body}</p>
+      {action}
     </div>
   );
 }
 
 export function SkeletonRows() {
   return (
-    <div className="card" aria-busy="true" aria-label="Yükleniyor">
+    <div className="card" aria-busy="true" aria-label={copy.loading}>
       <div className="skeleton" />
       <div className="skeleton" style={{ marginTop: 10, width: "70%" }} />
       <div className="skeleton" style={{ marginTop: 10, width: "40%" }} />
@@ -94,7 +105,7 @@ export function DataTable<T>({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={columns.length}>Kayıt yok.</td>
+                <td colSpan={columns.length}>{copy.none}</td>
               </tr>
             )}
             {rows.map((row) => (
@@ -108,10 +119,10 @@ export function DataTable<T>({
         </table>
       </div>
       <div className="pager">
-        <span>{table.getFilteredRowModel().rows.length} kayıt</span>
+        <span>{copy.records(table.getFilteredRowModel().rows.length)}</span>
         <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>Önceki</button>
-          <button className="btn-ghost" type="button" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>Sonraki</button>
+          <button className="btn-ghost" type="button" onClick={() => table.previousPage()} disabled={!table.getCanPreviousPage()}>{copy.previous}</button>
+          <button className="btn-ghost" type="button" onClick={() => table.nextPage()} disabled={!table.getCanNextPage()}>{copy.next}</button>
         </span>
       </div>
     </div>
@@ -132,8 +143,8 @@ export function CodeBlock({ code }: { code: string }) {
   const html = code
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(SQL, "<span style=\"color:#8ee0c8\">$1</span>")
-    .replace(/(['"])(?:\\.|(?!\1).)*\1/g, "<span style=\"color:#f2d48a\">$&</span>");
+    .replace(SQL, "<span style=\"color:#e4c27a\">$1</span>")
+    .replace(/(['"])(?:\\.|(?!\1).)*\1/g, "<span style=\"color:#9eb6ff\">$&</span>");
   return <pre className="code" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -162,4 +173,9 @@ export function Markdown({ text }: { text: string }) {
       })}
     </div>
   );
+}
+
+export function Toast({ message }: { message: string }) {
+  if (!message) return null;
+  return <div className="toasts" role="status"><div className="toast">{message}</div></div>;
 }

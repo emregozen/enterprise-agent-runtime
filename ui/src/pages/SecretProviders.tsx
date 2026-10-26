@@ -1,6 +1,6 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
-import { DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
+import { DataTable, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 
 type Provider = {
@@ -59,13 +59,9 @@ export function SecretProviders() {
       account: form.account,
       auth_method: form.auth_method,
       ca_bundle: form.ca_bundle,
-      config: {
-        login: form.login,
-        service_id: form.service_id,
-        app_id: form.app_id,
-      },
+      config: { login: form.login, service_id: form.service_id, app_id: form.app_id },
       credential_secret_name: form.credential_secret_name,
-      credential_secret_key: form.credential_secret_key || "api_key",
+      credential_secret_key: form.credential_secret_key,
       tls_cert_key: form.tls_cert_key,
       tls_key_key: form.tls_key_key,
       credential_namespace: form.credential_namespace,
@@ -76,37 +72,37 @@ export function SecretProviders() {
       else await api("/api/secret-providers", { method: "POST", body: JSON.stringify(payload) });
       setForm(null);
       setEditing(null);
-      setToast("Kaydedildi");
+      setToast("Saved");
       load();
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "kaydedilemedi");
+      setToast(exc instanceof ApiError ? exc.message : "Could not save");
     }
   }
 
   async function test(id: string) {
     try {
       const result = await api<{ ok: boolean; checked: string }>(`/api/secret-providers/${id}/test`, { method: "POST", body: "{}" });
-      setToast(result.ok ? `Sağlayıcı yanıt verdi (${result.checked})` : "Sağlayıcı yanıt vermedi");
+      setToast(result.ok ? `Provider responded (${result.checked})` : "The provider did not respond");
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "sağlayıcıya ulaşılamadı");
+      setToast(exc instanceof ApiError ? exc.message : "The provider is unreachable");
     }
   }
 
   const columns: ColumnDef<Provider>[] = [
-    { accessorKey: "name", header: "Ad" },
-    { accessorKey: "kind", header: "Tür" },
-    { accessorKey: "base_url", header: "Adres" },
-    { accessorKey: "auth_method", header: "Kimlik" },
-    { id: "cred", header: "Kimlik Secret'ı", cell: ({ row }) => row.original.credential_secret_name || "—" },
-    { id: "on", header: "Durum", cell: ({ row }) => row.original.enabled ? <span className="badge ok">Açık</span> : <span className="badge warn">Kapalı</span> },
+    { accessorKey: "name", header: "Name" },
+    { accessorKey: "kind", header: "Kind" },
+    { accessorKey: "base_url", header: "Address" },
+    { accessorKey: "auth_method", header: "Auth" },
+    { id: "cred", header: "Credential Secret", cell: ({ row }) => row.original.credential_secret_name || "—" },
+    { id: "on", header: "Status", cell: ({ row }) => row.original.enabled ? <span className="badge ok">On</span> : <span className="badge warn">Off</span> },
     {
       id: "actions",
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Dene</button>
-          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>Düzenle</button>
-          <button className="btn-danger" type="button" onClick={() => void api(`/api/secret-providers/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Silindi"); load(); }).catch((exc: ApiError) => setToast(exc.message))}>Sil</button>
+          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Test</button>
+          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>Edit</button>
+          <button className="btn-danger" type="button" onClick={() => void api(`/api/secret-providers/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Deleted"); load(); }).catch((exc: ApiError) => setToast(exc.message))}>Delete</button>
         </span>
       ),
     },
@@ -139,64 +135,65 @@ export function SecretProviders() {
     <>
       <div className="page-head">
         <div>
-          <h1>Gizli Bilgi Kaynakları</h1>
-          <p>Conjur ve CyberArk CCP adresleri burada durur. API anahtarı ve istemci sertifikası düz metin kaydedilmez; kontrol düzlemi onları kendi ad alanındaki bir Kubernetes Secret'tan okur.</p>
+          <p className="eyebrow">Vaults</p>
+          <h1>Secret sources</h1>
+          <p>Conjur and CyberArk CCP addresses live here. API keys and client certificates are not stored in plaintext. The control plane reads them from a Kubernetes Secret in its own namespace.</p>
         </div>
-        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>Yeni kaynak</button>
+        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>
       </div>
       <section className="card">
-        {rows.length === 0 ? <Empty title="Kaynak yok" body="Bir Conjur veya CCP kaydı ekleyin. OpenBao/Vault türü durur, sır okumaz." /> : <DataTable data={rows} columns={columns} />}
+        {rows.length === 0 ? <Empty title="No sources" body="Add a Conjur or CCP record. The OpenBao/Vault kind is reserved and does not read secrets yet." /> : <DataTable data={rows} columns={columns} />}
       </section>
       {form && (
-        <Modal title={editing ? "Kaynağı düzenle" : "Yeni gizli bilgi kaynağı"} onClose={() => setForm(null)}>
+        <Modal title={editing ? "Edit source" : "New secret source"} onClose={() => setForm(null)}>
           <div className="grid-2">
-            <label className="field">Ad<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-            <label className="field">Tür
+            <label className="field">Name<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+            <label className="field">Kind
               <select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value, auth_method: event.target.value === "ccp" ? "mtls" : event.target.value === "conjur" ? "api-key" : "token" })}>
                 <option value="conjur">CyberArk Conjur</option>
                 <option value="ccp">CyberArk CCP</option>
-                <option value="vault">OpenBao / Vault (henüz yok)</option>
+                <option value="vault">OpenBao / Vault (not connected)</option>
               </select>
             </label>
-            <label className="field" style={{ gridColumn: "1 / -1" }}>Adres<input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></label>
-            <label className="field">Kimlik yöntemi
+            <label className="field" style={{ gridColumn: "1 / -1" }}>Address<input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></label>
+            <label className="field">Auth method
               <select value={form.auth_method} onChange={(event) => setForm({ ...form, auth_method: event.target.value })}>
                 {form.kind === "ccp" ? (
                   <>
-                    <option value="mtls">İstemci sertifikası (mTLS)</option>
-                    <option value="allowed-machines">İzinli makine</option>
+                    <option value="mtls">Client certificate (mTLS)</option>
+                    <option value="allowed-machines">Allowed machines</option>
                   </>
                 ) : (
                   <>
-                    <option value="api-key">API anahtarı</option>
-                    <option value="authn-k8s">authn-k8s (servis hesabı)</option>
-                    <option value="authn-jwt">authn-jwt (servis hesabı)</option>
+                    <option value="api-key">API key</option>
+                    <option value="authn-k8s">authn-k8s (service account)</option>
+                    <option value="authn-jwt">authn-jwt (service account)</option>
                     <option value="token">token</option>
                   </>
                 )}
               </select>
             </label>
-            <label className="field">Hesap<input value={form.account} placeholder="Conjur hesap adı" onChange={(event) => setForm({ ...form, account: event.target.value })} /></label>
-            <label className="field">Host kimliği<input autoComplete="off" placeholder="host/agent-runtime/control" value={form.login} onChange={(event) => setForm({ ...form, login: event.target.value })} /></label>
-            <label className="field">Kimlik doğrulayıcı<input autoComplete="off" placeholder="authn-k8s servis adı" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} /></label>
-            <label className="field">Varsayılan AppID<input autoComplete="off" value={form.app_id} onChange={(event) => setForm({ ...form, app_id: event.target.value })} /></label>
-            <label className="field">Secret adı<input autoComplete="off" value={form.credential_secret_name} onChange={(event) => setForm({ ...form, credential_secret_name: event.target.value })} /></label>
-            <label className="field">Secret anahtarı<input autoComplete="off" placeholder="api_key" value={form.credential_secret_key} onChange={(event) => setForm({ ...form, credential_secret_key: event.target.value })} /></label>
-            <label className="field">Sertifika anahtarı<input autoComplete="off" placeholder="tls.crt" value={form.tls_cert_key} onChange={(event) => setForm({ ...form, tls_cert_key: event.target.value })} /></label>
-            <label className="field">Özel anahtar adı<input autoComplete="off" placeholder="tls.key" value={form.tls_key_key} onChange={(event) => setForm({ ...form, tls_key_key: event.target.value })} /></label>
-            <label className="field" style={{ gridColumn: "1 / -1" }}>CA paketi
-              <textarea rows={4} value={form.ca_bundle} placeholder="Genel CA. Özel anahtar yazılmaz." onChange={(event) => setForm({ ...form, ca_bundle: event.target.value })} />
+            <label className="field">Account<input value={form.account} placeholder="Conjur account" onChange={(event) => setForm({ ...form, account: event.target.value })} /></label>
+            <label className="field">Host login<input autoComplete="off" placeholder="host/agent-runtime/control" value={form.login} onChange={(event) => setForm({ ...form, login: event.target.value })} /></label>
+            <label className="field">Authenticator<input autoComplete="off" placeholder="authn-k8s service id" value={form.service_id} onChange={(event) => setForm({ ...form, service_id: event.target.value })} /></label>
+            <label className="field">Default AppID<input autoComplete="off" value={form.app_id} onChange={(event) => setForm({ ...form, app_id: event.target.value })} /></label>
+            <label className="field">Secret name<input autoComplete="off" value={form.credential_secret_name} onChange={(event) => setForm({ ...form, credential_secret_name: event.target.value })} /></label>
+            <label className="field">Secret key<input autoComplete="off" placeholder="api_key" value={form.credential_secret_key} onChange={(event) => setForm({ ...form, credential_secret_key: event.target.value })} /></label>
+            <label className="field">Certificate key<input autoComplete="off" placeholder="tls.crt" value={form.tls_cert_key} onChange={(event) => setForm({ ...form, tls_cert_key: event.target.value })} /></label>
+            <label className="field">Private key name<input autoComplete="off" placeholder="tls.key" value={form.tls_key_key} onChange={(event) => setForm({ ...form, tls_key_key: event.target.value })} /></label>
+            <label className="field" style={{ gridColumn: "1 / -1" }}>CA bundle
+              <textarea rows={4} value={form.ca_bundle} placeholder="Public CA only. Do not paste a private key." onChange={(event) => setForm({ ...form, ca_bundle: event.target.value })} />
             </label>
-            <label className="field"><span>Açık</span><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
+            <label className="field"><span>Enabled</span><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /></label>
           </div>
-          <p>API anahtarı ve istemci sertifikası bu forma yazılmaz. Kontrol düzlemi Secret'ı kendi ad alanından okur. authn-k8s ve authn-jwt, servis hesabı token dosyası bağlıysa kullanılır; PoC yolu API anahtarıdır. OpenBao/Vault kaydı sır döndürmez.</p>
+          <p>API keys and client certificates are not entered on this form. The control plane reads the Secret from its own namespace. authn-k8s and authn-jwt are used when the service-account token file is mounted. The proof-of-concept path is an API key. An OpenBao/Vault record does not return a secret.</p>
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="button" onClick={() => void save()}>Kaydet</button>
-            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Vazgeç</button>
+            <button className="btn" type="button" onClick={() => void save()}>Save</button>
+            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Cancel</button>
           </div>
         </Modal>
       )}
-      {toast && <div className="toasts" role="status"><div className="toast">{toast}</div></div>}
+      <Toast message={toast} />
     </>
   );
 }

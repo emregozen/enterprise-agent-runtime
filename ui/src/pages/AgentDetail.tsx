@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, CodeBlock } from "../components/ui";
+import { Badge, CodeBlock, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { formatWhen } from "../lib/format";
 
@@ -22,7 +22,7 @@ export function AgentDetail() {
   const { id = "" } = useParams();
   const [agent, setAgent] = useState<Detail | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
-  const [tab, setTab] = useState("genel");
+  const [tab, setTab] = useState("overview");
   const [diff, setDiff] = useState("");
   const [error, setError] = useState("");
   const [goal, setGoal] = useState("");
@@ -43,72 +43,73 @@ export function AgentDetail() {
 
   async function showDiff(left: number, right: number) {
     const body = await api<{ diff: string }>(`/api/agents/${id}/diff?left=${left}&right=${right}`);
-    setDiff(body.diff || "Fark yok.");
-    setTab("surum");
+    setDiff(body.diff || "No difference.");
+    setTab("versions");
   }
 
   if (error) return <div className="card">{error}</div>;
-  if (!agent) return <div className="card">Yükleniyor…</div>;
+  if (!agent) return <SkeletonRows />;
   return (
     <>
       <div className="page-head">
         <div>
+          <p className="eyebrow">{agent.owner}</p>
           <h1>{agent.name}</h1>
-          <p>{agent.owner} · sürüm {agent.current_version ?? "—"}</p>
+          <p>Version {agent.current_version ?? "—"} · next {formatWhen(agent.schedule?.next_run_at)}</p>
         </div>
         <div className="row">
           <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
-          <button className="btn" type="button" onClick={() => api(`/api/agents/${id}/runs`, { method: "POST", body: "{}" }).then(load)}>Şimdi çalıştır</button>
+          <button className="btn" type="button" onClick={() => api(`/api/agents/${id}/runs`, { method: "POST", body: "{}" }).then(load)}>Run now</button>
           <button className="btn-ghost" type="button" onClick={() => api(`/api/agents/${id}/pause`, { method: "POST", body: JSON.stringify({ paused: !agent.schedule?.paused }) }).then(load)}>
-            {agent.schedule?.paused ? "Sürdür" : "Durdur"}
+            {agent.schedule?.paused ? "Resume" : "Pause"}
           </button>
         </div>
       </div>
       <div className="tabs">
-        {[["genel", "Genel"], ["spec", "Spec"], ["surum", "Sürümler"], ["kosum", "Koşumlar"]].map(([key, label]) => (
+        {[["overview", "Overview"], ["spec", "Spec"], ["versions", "Versions"], ["runs", "Runs"]].map(([key, label]) => (
           <button key={key} className={tab === key ? "on" : ""} type="button" onClick={() => setTab(key)}>{label}</button>
         ))}
       </div>
-      {tab === "genel" && (
+      {tab === "overview" && (
         <section className="grid-2">
           <article className="card">
-            <h2>Amaç</h2>
+            <h2>Goal</h2>
             <textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} />
-            <button className="btn" type="button" style={{ marginTop: 10 }} onClick={() => void saveGoal()}>Yeni sürüm olarak kaydet</button>
+            <button className="btn" type="button" style={{ marginTop: 10 }} onClick={() => void saveGoal()}>Save as a new version</button>
           </article>
           <article className="card">
-            <h2>Zamanlama</h2>
+            <h2>Schedule</h2>
             {agent.schedule ? (
-              <ul>
-                <li>Mod: {agent.schedule.mode}</li>
-                <li>Cron: {agent.schedule.cron || "—"}</li>
-                <li>Saat dilimi: {agent.schedule.time_zone}</li>
-                <li>Pencere: {agent.schedule.window}</li>
-                <li>Günlük tavan: {agent.schedule.max_runs_per_day}</li>
-                <li>Sonraki: {formatWhen(agent.schedule.next_run_at)}</li>
-              </ul>
-            ) : <p>Zamanlama yok.</p>}
+              <dl className="agent-meta">
+                <div><dt>Mode</dt><dd>{agent.schedule.mode}</dd></div>
+                <div><dt>Cron</dt><dd>{agent.schedule.cron || "—"}</dd></div>
+                <div><dt>Time zone</dt><dd>{agent.schedule.time_zone}</dd></div>
+                <div><dt>Window</dt><dd>{agent.schedule.window}</dd></div>
+                <div><dt>Daily cap</dt><dd>{agent.schedule.max_runs_per_day}</dd></div>
+                <div><dt>Next</dt><dd>{formatWhen(agent.schedule.next_run_at)}</dd></div>
+              </dl>
+            ) : <p>No schedule.</p>}
           </article>
         </section>
       )}
       {tab === "spec" && <section className="card"><CodeBlock code={JSON.stringify(agent.spec, null, 2)} /></section>}
-      {tab === "surum" && (
+      {tab === "versions" && (
         <section className="card">
           {agent.versions.map((version) => (
             <p key={version.version}>
               v{version.version} <Badge status={version.status} /> {formatWhen(version.created_at)}
-              {version.version > 1 && <button className="btn-ghost" type="button" onClick={() => void showDiff(version.version - 1, version.version)}>Fark</button>}
+              {version.version > 1 && <button className="btn-ghost" type="button" onClick={() => void showDiff(version.version - 1, version.version)}>Diff</button>}
             </p>
           ))}
           {diff && <CodeBlock code={diff} />}
         </section>
       )}
-      {tab === "kosum" && (
+      {tab === "runs" && (
         <section className="card">
           {runs.map((run) => (
             <p key={run.id}><Badge status={run.status} /> <Link to={`/runs/${run.id}`}>{formatWhen(run.created_at)}</Link> · {run.trigger}</p>
           ))}
-          {runs.length === 0 && <p>Bu ajana ait koşum yok.</p>}
+          {runs.length === 0 && <p>This agent has no runs.</p>}
         </section>
       )}
     </>

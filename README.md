@@ -12,7 +12,7 @@ Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir
 
 Rapor tablosundaki sapma yüzdeleri aynı biçimde yazılır (`0,00%` ve `300,00%`). Model çağrısı gecikme ve jeton sayısını günlüğe yazar. Akıl yürütme (`reasoning_effort`) isteğe bağlıdır ve varsayılan kapalıdır.
 
-Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketinde OpenShift tetikleyicisi Deployment metadata’sındadır; pod şablonuna konursa derleme podu yenilemez. Ulaşılamayan veri kaynağı sihirbazda Türkçe bir 502 döner. Rapor, aynı sayıları başka biçimde tekrarlayan tabloyu ve boş liste bölümünü yazmaz.
+Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketinde OpenShift tetikleyicisi Deployment metadata’sındadır; pod şablonuna konursa derleme podu yenilemez. Ulaşılamayan veri kaynağı API’de Türkçe bir 502 döner; konsol bunu İngilizce gösterir. Rapor, aynı sayıları başka biçimde tekrarlayan tabloyu ve boş liste bölümünü yazmaz.
 
 Master key döndürme `python -m control_plane.rotate_master_key` ile yapılır. Güncel anahtar `CONFIG_MASTER_KEY`, eskisi `CONFIG_MASTER_KEY_OLD` olur. `helm get manifest` çıktısından `agent-runtime-master-key` Secret’ı ayıklanır; anahtar düz metin basılır. Adımlar kontrol listesindedir.
 
@@ -20,7 +20,7 @@ Parola kaynağı üç yerden biri olabilir: platform veritabanı, Kubernetes Sec
 
 Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
 
-Arayüz sol menülü bir yönetim konsoludur. Açık ve koyu tema vardır. Yazı tipleri ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
+Arayüz sol menülü bir yönetim konsoludur. Ekran metinleri İngilizcedir (`en-US` tarih ve sayı). Ajan açıklaması olduğu gibi kalır; sihirbaz Türkçe tarifi kabul eder. API’nin Türkçe hata metni konsolda İngilizceye çevrilir. Metinler `ui/src/lib/copy.ts` içindedir; şimdilik yalnız İngilizce gönderilir. Açık ve koyu tema vardır. Yazı tipleri (Fraunces, Outfit, IBM Plex Mono) ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
 
 Çıkış ağı sessizce açılmaz. Koşum podu DNS, kontrol düzlemi, Postgres ve chart’taki `extraEgress` listesi dışında çıkamaz. Ağ politikası DNS adı seçemediği için DeepSeek denemesinde `0.0.0.0/0:443` kullanılır ve özel aralıklar `except` ile kesilir. Kurumsal kurulumda bunun yerine EgressFirewall veya bir çıkış vekili gerekir.
 

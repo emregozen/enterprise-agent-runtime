@@ -1,7 +1,7 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { EMPTY_SECRET_SOURCE, SecretSourceFields, secretSourceFromRow, type SecretSource } from "../components/SecretSourceFields";
-import { Badge, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
+import { Badge, DataTable, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 
 type Provider = {
@@ -76,38 +76,38 @@ export function Models() {
       else await api("/api/llm/providers", { method: "POST", body: JSON.stringify(payload) });
       setForm(null);
       setEditing(null);
-      setToast("Kaydedildi");
+      setToast("Saved");
       load();
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "kaydedilemedi");
+      setToast(exc instanceof ApiError ? exc.message : "Could not save");
     }
   }
 
   async function test(id: string) {
     try {
       const result = await api<{ ok: boolean; latency_ms: number; sample: string }>(`/api/llm/providers/${id}/test`, { method: "POST" });
-      setToast(`Yanıt ${result.latency_ms} ms: ${result.sample}`);
+      setToast(`Reply in ${result.latency_ms} ms: ${result.sample}`);
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "deneme olmadı");
+      setToast(exc instanceof ApiError ? exc.message : "The test did not complete");
     }
   }
 
   const columns: ColumnDef<Provider>[] = [
-    { accessorKey: "name", header: "Ad" },
+    { accessorKey: "name", header: "Name" },
     { accessorKey: "model", header: "Model" },
-    { accessorKey: "base_url", header: "Adres" },
-    { id: "source", header: "Parola kaynağı", cell: ({ row }) => sourceLabel(row.original.secret_backend) },
-    { id: "key", header: "Anahtar", cell: ({ row }) => row.original.api_key_set ? row.original.api_key_hint || "kayıtlı" : "—" },
-    { accessorKey: "reasoning_effort", header: "Akıl yürütme", cell: ({ getValue }) => String(getValue() || "kapalı") },
-    { id: "def", header: "Varsayılan", cell: ({ row }) => row.original.is_default ? <Badge status="published" /> : "—" },
+    { accessorKey: "base_url", header: "Address" },
+    { id: "source", header: "Secret backend", cell: ({ row }) => sourceLabel(row.original.secret_backend) },
+    { id: "key", header: "Key", cell: ({ row }) => row.original.api_key_set ? row.original.api_key_hint || "stored" : "—" },
+    { accessorKey: "reasoning_effort", header: "Reasoning", cell: ({ getValue }) => String(getValue() || "off") },
+    { id: "def", header: "Default", cell: ({ row }) => row.original.is_default ? <Badge status="published" /> : "—" },
     {
       id: "actions",
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Dene</button>
-          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, name: row.original.name, base_url: row.original.base_url, model: row.original.model, api_key: "", temperature: row.original.temperature === null ? "" : String(row.original.temperature), reasoning_effort: row.original.reasoning_effort, is_default: row.original.is_default, ...secretSourceFromRow(row.original) }); }}>Düzenle</button>
-          <button className="btn-danger" type="button" onClick={() => void api(`/api/llm/providers/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Silindi"); load(); })}>Sil</button>
+          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Test</button>
+          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, name: row.original.name, base_url: row.original.base_url, model: row.original.model, api_key: "", temperature: row.original.temperature === null ? "" : String(row.original.temperature), reasoning_effort: row.original.reasoning_effort, is_default: row.original.is_default, ...secretSourceFromRow(row.original) }); }}>Edit</button>
+          <button className="btn-danger" type="button" onClick={() => void api(`/api/llm/providers/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Deleted"); load(); })}>Delete</button>
         </span>
       ),
     },
@@ -119,20 +119,21 @@ export function Models() {
     <>
       <div className="page-head">
         <div>
-          <h1>LLM Modelleri</h1>
-          <p>OpenAI uyumlu adresler. Anahtar platformda şifreli durabilir veya bir Kubernetes Secret ya da CyberArk kaydına başvurur. Akıl yürütme boşsa kapalıdır.</p>
+          <p className="eyebrow">Models</p>
+          <h1>LLM providers</h1>
+          <p>OpenAI-compatible endpoints. The key can stay encrypted on the platform, or point at a Kubernetes Secret or a CyberArk record. Leave reasoning empty to turn it off.</p>
         </div>
-        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>Yeni model</button>
+        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New model</button>
       </div>
       <section className="card">
-        {rows.length === 0 ? <Empty title="Model yok" body="DeepSeek veya başka bir OpenAI uyumlu uç ekleyin. Sahte modda koşumlar bu listeyi beklemez." /> : <DataTable data={rows} columns={columns} />}
+        {rows.length === 0 ? <Empty title="No models" body="Add DeepSeek or another OpenAI-compatible endpoint. Simulated mode does not wait on this list." /> : <DataTable data={rows} columns={columns} />}
       </section>
       {form && (
-        <Modal title={editing ? "Modeli düzenle" : "Yeni model"} onClose={() => setForm(null)}>
+        <Modal title={editing ? "Edit model" : "New model"} onClose={() => setForm(null)}>
           <div className="grid-2">
-            <label className="field">Ad<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+            <label className="field">Name<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
             <label className="field">Model<input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} /></label>
-            <label className="field" style={{ gridColumn: "1 / -1" }}>Adres<input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></label>
+            <label className="field" style={{ gridColumn: "1 / -1" }}>Address<input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></label>
             <SecretSourceFields
               value={form}
               providers={providers}
@@ -140,26 +141,26 @@ export function Models() {
               onChange={(next: SecretSource) => setForm({ ...form, ...next, api_key: next.secret_backend === "db" ? form.api_key : "" })}
             />
             {form.secret_backend === "db" && (
-              <label className="field">API anahtarı<input type="password" autoComplete="new-password" placeholder={editing ? "Boş bırakılırsa değişmez" : ""} value={form.api_key} onChange={(event) => setForm({ ...form, api_key: event.target.value })} /></label>
+              <label className="field">API key<input type="password" autoComplete="new-password" placeholder={editing ? "Leave blank to keep the current key" : ""} value={form.api_key} onChange={(event) => setForm({ ...form, api_key: event.target.value })} /></label>
             )}
-            <label className="field">Sıcaklık<input value={form.temperature} placeholder="0" onChange={(event) => setForm({ ...form, temperature: event.target.value })} /></label>
-            <label className="field">Akıl yürütme
+            <label className="field">Temperature<input value={form.temperature} placeholder="0" onChange={(event) => setForm({ ...form, temperature: event.target.value })} /></label>
+            <label className="field">Reasoning
               <select value={form.reasoning_effort} onChange={(event) => setForm({ ...form, reasoning_effort: event.target.value })}>
-                <option value="">Kapalı</option>
+                <option value="">Off</option>
                 <option value="low">low</option>
                 <option value="medium">medium</option>
                 <option value="high">high</option>
               </select>
             </label>
-            <label className="field"><span>Varsayılan</span><input type="checkbox" checked={form.is_default} onChange={(event) => setForm({ ...form, is_default: event.target.checked })} /></label>
+            <label className="field"><span>Default</span><input type="checkbox" checked={form.is_default} onChange={(event) => setForm({ ...form, is_default: event.target.checked })} /></label>
           </div>
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="button" onClick={() => void save()}>Kaydet</button>
-            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Vazgeç</button>
+            <button className="btn" type="button" onClick={() => void save()}>Save</button>
+            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Cancel</button>
           </div>
         </Modal>
       )}
-      {toast && <div className="toasts" role="status"><div className="toast">{toast}</div></div>}
+      <Toast message={toast} />
     </>
   );
 }

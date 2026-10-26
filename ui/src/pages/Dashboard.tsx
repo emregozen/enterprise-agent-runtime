@@ -4,7 +4,9 @@ import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge, DataTable, Empty, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
-import { dayLabel, formatDuration, formatNumber, formatWhen } from "../lib/format";
+import { copy } from "../lib/copy";
+import { presentText } from "../lib/errors";
+import { dayLabel, formatDuration, formatNumber, formatPercent, formatWhen } from "../lib/format";
 
 type Board = {
   active_agents: number;
@@ -18,66 +20,76 @@ type Board = {
   alerts: { id: string; agent_name: string; status: string; reason: string; created_at: string }[];
 };
 
+type Agent = { id: string; name: string; schedule: { paused: boolean; cron: string | null; next_run_at: string | null; mode: string } | null };
+
 const columns: ColumnDef<Board["recent_runs"][number]>[] = [
-  { accessorKey: "agent_name", header: "Ajan" },
-  { accessorKey: "status", header: "Durum", cell: ({ row }) => <Badge status={row.original.status} /> },
-  { accessorKey: "created_at", header: "Zaman", cell: ({ getValue }) => formatWhen(String(getValue())) },
-  { id: "open", header: "", cell: ({ row }) => <Link to={`/runs/${row.original.id}`}>Aç</Link> },
+  { accessorKey: "agent_name", header: "Agent" },
+  { accessorKey: "status", header: "Status", cell: ({ row }) => <Badge status={row.original.status} /> },
+  { accessorKey: "created_at", header: "When", cell: ({ getValue }) => formatWhen(String(getValue())) },
+  { id: "open", header: "", cell: ({ row }) => <Link to={`/runs/${row.original.id}`}>{copy.open}</Link> },
 ];
 
 export function Dashboard() {
   const [data, setData] = useState<Board | null>(null);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [error, setError] = useState("");
   useEffect(() => {
     api<Board>("/api/dashboard?days=14").then(setData).catch((exc: ApiError) => setError(exc.message));
+    api<Agent[]>("/api/agents").then(setAgents).catch(() => setAgents([]));
   }, []);
-  if (error) return <div className="card">Pano alınamadı: {error}</div>;
+  if (error) return <div className="card">Could not load the overview: {error}</div>;
   if (!data) return <SkeletonRows />;
   const chart = data.series.map((item) => ({ ...item, label: dayLabel(item.day) }));
+  const upcoming = agents
+    .filter((agent) => agent.schedule?.next_run_at && !agent.schedule.paused)
+    .sort((left, right) => String(left.schedule?.next_run_at).localeCompare(String(right.schedule?.next_run_at)))
+    .slice(0, 5);
+  const today = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" }).format(new Date());
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>Genel Bakış</h1>
-          <p>Bugünün koşumları, inceleme kuyruğu ve model kullanımı.</p>
+          <p className="eyebrow">Control room</p>
+          <h1>Overview</h1>
+          <p className="hero-date">{today}. Today's runs, the review queue, and model use.</p>
         </div>
-        <Link className="btn" to="/agents/new">Yeni ajan</Link>
+        <Link className="btn" to="/agents/new">New agent</Link>
       </div>
       <section className="grid-6">
-        <Kpi label="Yayındaki ajan" value={formatNumber(data.active_agents)} />
-        <Kpi label="Bugünkü koşum" value={formatNumber(data.runs_today)} />
-        <Kpi label="Başarı" value={data.success_rate === null ? "—" : `%${data.success_rate}`} />
-        <Kpi label="Ort. süre" value={formatDuration(data.avg_duration_seconds)} />
-        <Kpi label="İnceleme" value={formatNumber(data.needs_review)} />
-        <Kpi label="Jeton (bugün)" value={formatNumber(data.tokens_today)} />
+        <Kpi label="Published agents" value={formatNumber(data.active_agents)} />
+        <Kpi label="Runs today" value={formatNumber(data.runs_today)} />
+        <Kpi label="Success rate" value={formatPercent(data.success_rate)} />
+        <Kpi label="Avg. duration" value={formatDuration(data.avg_duration_seconds)} />
+        <Kpi label="Needs review" value={formatNumber(data.needs_review)} />
+        <Kpi label="Tokens today" value={formatNumber(data.tokens_today)} />
       </section>
       <section className="grid-2">
         <article className="card">
-          <h2>Duruma göre koşum</h2>
-          <div style={{ height: 240 }}>
+          <h2>Runs by outcome</h2>
+          <div className="chart-box">
             <ResponsiveContainer>
               <BarChart data={chart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-                <XAxis dataKey="label" />
-                <YAxis allowDecimals={false} />
+                <XAxis dataKey="label" stroke="var(--muted)" />
+                <YAxis allowDecimals={false} stroke="var(--muted)" />
                 <Tooltip />
-                <Bar dataKey="succeeded" stackId="a" fill="#1b7a48" name="Başarılı" />
-                <Bar dataKey="failed" stackId="a" fill="#9d2d2d" name="Başarısız" />
-                <Bar dataKey="needs_review" stackId="a" fill="#8a5a10" name="İnceleme" />
+                <Bar dataKey="succeeded" stackId="a" fill="#1d7a4d" name="Succeeded" radius={[0, 0, 0, 0]} />
+                <Bar dataKey="failed" stackId="a" fill="#9d2c3a" name="Failed" />
+                <Bar dataKey="needs_review" stackId="a" fill="#c48a2e" name="Needs review" />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </article>
         <article className="card">
-          <h2>Süre eğilimi</h2>
-          <div style={{ height: 240 }}>
+          <h2>Duration trend</h2>
+          <div className="chart-box">
             <ResponsiveContainer>
               <LineChart data={chart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-                <XAxis dataKey="label" />
-                <YAxis />
+                <XAxis dataKey="label" stroke="var(--muted)" />
+                <YAxis stroke="var(--muted)" />
                 <Tooltip />
-                <Line type="monotone" dataKey="avg_duration" stroke="#0c6e67" name="Saniye" connectNulls />
+                <Line type="monotone" dataKey="avg_duration" stroke="#c48a2e" name="Seconds" connectNulls strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -85,14 +97,19 @@ export function Dashboard() {
       </section>
       <section className="grid-2">
         <article className="card">
-          <h2>Son koşumlar</h2>
-          {data.recent_runs.length === 0 ? <Empty title="Henüz koşum yok" body="Bir ajan yayınlayıp şimdi çalıştırın." /> : <DataTable data={data.recent_runs} columns={columns} />}
+          <h2>Recent runs</h2>
+          {data.recent_runs.length === 0 ? <Empty title="No runs yet" body="Publish an agent and run it now." /> : <DataTable data={data.recent_runs} columns={columns} />}
         </article>
         <article className="card">
-          <h2>Uyarılar</h2>
-          {data.alerts.length === 0 && <Empty title="Açık uyarı yok" body="Başarısız veya incelemeye düşen koşum burada görünür." />}
+          <h2>Up next</h2>
+          {upcoming.length === 0 && <Empty title="Nothing scheduled" body="Agents on a cron show their next run here." />}
+          {upcoming.map((agent) => (
+            <p key={agent.id}><Link to={`/agents/${agent.id}`}>{agent.name}</Link> · {agent.schedule?.cron || agent.schedule?.mode} · {formatWhen(agent.schedule?.next_run_at)}</p>
+          ))}
+          <h2>Alerts</h2>
+          {data.alerts.length === 0 && <Empty title="No open alerts" body="Failed runs and reviews appear here." />}
           {data.alerts.map((alert) => (
-            <p key={alert.id}><Badge status={alert.status} /> <Link to={`/runs/${alert.id}`}>{alert.agent_name}</Link> — {alert.reason || "ayrıntı yok"}</p>
+            <p key={alert.id}><Badge status={alert.status} /> <Link to={`/runs/${alert.id}`}>{alert.agent_name}</Link> — {presentText(alert.reason) || "No detail"}</p>
           ))}
         </article>
       </section>

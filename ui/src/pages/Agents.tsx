@@ -1,8 +1,8 @@
-import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Badge, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
+import { Badge, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
 
 type Agent = {
@@ -11,7 +11,7 @@ type Agent = {
   owner: string;
   status: string;
   current_version: number | null;
-  schedule: { paused: boolean; mode: string; cron: string | null } | null;
+  schedule: { paused: boolean; mode: string; cron: string | null; next_run_at: string | null } | null;
   updated_at: string;
 };
 
@@ -34,28 +34,9 @@ export function Agents() {
       setToast(ok);
       load();
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "işlem olmadı");
+      setToast(exc instanceof ApiError ? exc.message : copy.couldNotComplete);
     }
   }
-
-  const columns: ColumnDef<Agent>[] = [
-    { accessorKey: "name", header: "Ad", cell: ({ row }) => <Link to={`/agents/${row.original.id}`}>{row.original.name}</Link> },
-    { accessorKey: "owner", header: "Sahip" },
-    { accessorKey: "status", header: "Durum", cell: ({ row }) => <Badge status={row.original.schedule?.paused ? "paused" : row.original.status} /> },
-    { accessorKey: "current_version", header: "Sürüm" },
-    { id: "when", header: "Güncelleme", accessorFn: (row) => row.updated_at, cell: ({ getValue }) => formatWhen(String(getValue() || "")) },
-    {
-      id: "actions",
-      header: "",
-      cell: ({ row }) => (
-        <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => act(`/api/agents/${row.original.id}/runs`, "POST", "Koşum istendi")}>Çalıştır</button>
-          <button className="btn-ghost" type="button" onClick={() => act(`/api/agents/${row.original.id}/duplicate`, "POST", "Kopyalandı")}>Kopyala</button>
-          <button className="btn-danger" type="button" onClick={() => setPending(row.original)}>Sil</button>
-        </span>
-      ),
-    },
-  ];
 
   if (error) return <div className="card">{error}</div>;
   if (!rows) return <SkeletonRows />;
@@ -64,25 +45,51 @@ export function Agents() {
     <>
       <div className="page-head">
         <div>
-          <h1>Agent'lar</h1>
-          <p>Yayınlanan ajanlar ve zamanlamaları. Silmek kaydı gizler, geçmiş koşumlar durur.</p>
+          <p className="eyebrow">Fleet</p>
+          <h1>Agents</h1>
+          <p>Published agents and their schedules. Deleting hides the record. Past runs stay.</p>
         </div>
-        <button className="btn" type="button" onClick={() => navigate("/agents/new")}>Yeni ajan</button>
+        <button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>
       </div>
       <section className="card">
-        <input className="search" aria-label="Ajan ara" placeholder="Ad veya sahip" value={q} onChange={(event) => setQ(event.target.value)} />
-        {filtered.length === 0 ? <Empty title="Ajan yok" body="Sihirbazla bir açıklama yazıp spec üretebilirsiniz." /> : <DataTable data={filtered} columns={columns} />}
+        <input className="search" aria-label="Search agents" placeholder="Name or owner" value={q} onChange={(event) => setQ(event.target.value)} />
       </section>
+      {filtered.length === 0 ? (
+        <Empty title="No agents" body="Describe a job in the builder and publish a spec." action={<button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>} />
+      ) : (
+        <section className="agent-grid">
+          {filtered.map((agent) => (
+            <article className="agent-card" key={agent.id}>
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <h2><Link to={`/agents/${agent.id}`}>{agent.name}</Link></h2>
+                <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
+              </div>
+              <p className="lede" style={{ margin: 0 }}>{agent.owner}</p>
+              <dl className="agent-meta">
+                <div><dt>Version</dt><dd>{agent.current_version ?? "—"}</dd></div>
+                <div><dt>Schedule</dt><dd>{agent.schedule?.cron || agent.schedule?.mode || "—"}</dd></div>
+                <div><dt>Next run</dt><dd>{formatWhen(agent.schedule?.next_run_at)}</dd></div>
+                <div><dt>Updated</dt><dd>{formatWhen(agent.updated_at)}</dd></div>
+              </dl>
+              <div className="row">
+                <button className="btn" type="button" onClick={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")}>Run</button>
+                <button className="btn-ghost" type="button" onClick={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")}>Duplicate</button>
+                <button className="btn-danger" type="button" onClick={() => setPending(agent)}>Delete</button>
+              </div>
+            </article>
+          ))}
+        </section>
+      )}
       {pending && (
-        <Modal title="Ajanı sil" onClose={() => setPending(null)}>
-          <p><b>{pending.name}</b> gizlenecek, zamanlaması duracak. Koşumlar ve artefaktlar kalır.</p>
+        <Modal title="Delete agent" onClose={() => setPending(null)}>
+          <p><b>{pending.name}</b> will be hidden and its schedule will stop. Runs and artifacts remain.</p>
           <div className="row">
-            <button className="btn-danger" type="button" onClick={() => { setPending(null); void act(`/api/agents/${pending.id}`, "DELETE", "Ajan silindi"); }}>Sil</button>
-            <button className="btn-ghost" type="button" onClick={() => setPending(null)}>Vazgeç</button>
+            <button className="btn-danger" type="button" onClick={() => { const id = pending.id; setPending(null); void act(`/api/agents/${id}`, "DELETE", "Agent deleted"); }}>Delete</button>
+            <button className="btn-ghost" type="button" onClick={() => setPending(null)}>Cancel</button>
           </div>
         </Modal>
       )}
-      {toast && <div className="toasts" role="status"><div className="toast">{toast}</div></div>}
+      <Toast message={toast} />
     </>
   );
 }
