@@ -1,7 +1,7 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, DataTable, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
+import { Badge, DataTable, Empty, Modal, SkeletonRows, Toast, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
 import { statusLabel, formatWhen } from "../lib/format";
@@ -10,6 +10,14 @@ type Run = { id: string; agent_name: string; status: string; trigger: string; cr
 
 const STATUSES = ["", "running", "succeeded", "failed", "needs_review", "cancelled", "pending"];
 
+const BOARD = [
+  { key: "running", title: "Running", tone: "info", statuses: ["running", "pending"] },
+  { key: "needs_review", title: "Needs review", tone: "warn", statuses: ["needs_review"] },
+  { key: "failed", title: "Failed", tone: "bad", statuses: ["failed"] },
+  { key: "succeeded", title: "Succeeded", tone: "ok", statuses: ["succeeded"] },
+  { key: "cancelled", title: "Cancelled", tone: "", statuses: ["cancelled"] },
+];
+
 export function Runs() {
   const [rows, setRows] = useState<Run[] | null>(null);
   const [error, setError] = useState("");
@@ -17,6 +25,7 @@ export function Runs() {
   const [q, setQ] = useState("");
   const [toast, setToast] = useState("");
   const [confirm, setConfirm] = useState(false);
+  const [view, setView] = useState("board");
 
   function load(nextStatus = status, nextQuery = q) {
     const params = new URLSearchParams({ limit: "100" });
@@ -67,16 +76,49 @@ export function Runs() {
           <h1>Runs</h1>
           <p>Cancelled runs, and runs that fail before they start, do not count toward the daily limit.</p>
         </div>
-        <button className="btn-danger" type="button" onClick={() => setConfirm(true)}>Delete old runs</button>
+        <div className="row">
+          <ViewToggle value={view} onChange={setView} options={[{ id: "board", label: "Board" }, { id: "table", label: "Table" }]} />
+          <button className="btn-danger" type="button" onClick={() => setConfirm(true)}>Delete old runs</button>
+        </div>
       </div>
       <section className="card">
         <div className="row">
           <input className="search" aria-label="Search by agent name" value={q} placeholder="Agent name" onChange={(event) => setQ(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") load(status, event.currentTarget.value); }} />
-          <select className="top-select" aria-label="Status" value={status} onChange={(event) => setStatus(event.target.value)}>
-            {STATUSES.map((item) => <option key={item || "all"} value={item}>{item ? statusLabel(item) : "All"}</option>)}
-          </select>
+          <div className="pills" role="group" aria-label="Status">
+            {STATUSES.map((item) => (
+              <button key={item || "all"} type="button" className={status === item ? "on" : ""} aria-pressed={status === item} onClick={() => setStatus(item)}>{item ? statusLabel(item) : "All"}</button>
+            ))}
+          </div>
         </div>
-        {rows.length === 0 ? <Empty title="No runs" body="Run an agent to see it here." /> : <DataTable data={rows} columns={columns} />}
+        {rows.length === 0 ? <Empty title="No runs" body="Run an agent to see it here." /> : view === "table" ? <DataTable data={rows} columns={columns} /> : (
+          <div className="board">
+            {BOARD.filter((column) => !status || column.statuses.includes(status)).map((column) => {
+              const items = rows.filter((row) => column.statuses.includes(row.status));
+              return (
+                <section className={`board-col ${column.tone}`} key={column.key}>
+                  <h2>{column.title} · {items.length}</h2>
+                  {items.length === 0 && <p className="lede">None</p>}
+                  {items.map((run) => (
+                    <article className="board-card" key={run.id}>
+                      <div className="row" style={{ justifyContent: "space-between" }}>
+                        <Link to={`/runs/${run.id}`}>{run.agent_name}</Link>
+                        <Badge status={run.status} />
+                      </div>
+                      <p>{run.trigger} · v{run.spec_version} · {formatWhen(run.created_at)}</p>
+                      <span className="row">
+                        {(run.status === "running" || run.status === "pending") && (
+                          <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${run.id}/cancel`, "POST", "Cancelled")}>Cancel</button>
+                        )}
+                        <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${run.id}/rerun`, "POST", "Rerun requested")}>Rerun</button>
+                        <button className="btn-danger" type="button" onClick={() => void call(`/api/runs/${run.id}`, "DELETE", "Run deleted")}>Delete</button>
+                      </span>
+                    </article>
+                  ))}
+                </section>
+              );
+            })}
+          </div>
+        )}
       </section>
       {confirm && (
         <Modal title="Delete old runs" onClose={() => setConfirm(false)}>

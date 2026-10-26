@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Badge, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
+import { Badge, Empty, Modal, SkeletonRows, Toast, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
@@ -22,6 +22,7 @@ export function Agents() {
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<Agent | null>(null);
   const [toast, setToast] = useState("");
+  const [view, setView] = useState("grid");
 
   function load() {
     api<Agent[]>("/api/agents").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -49,13 +50,30 @@ export function Agents() {
           <h1>Agents</h1>
           <p>Published agents and their schedules. Deleting hides the record. Past runs stay.</p>
         </div>
-        <button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>
+        <div className="row">
+          <ViewToggle value={view} onChange={setView} options={[{ id: "grid", label: "Cards" }, { id: "list", label: "List" }]} />
+          <button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>
+        </div>
       </div>
       <section className="card">
         <input className="search" aria-label="Search agents" placeholder="Name or owner" value={q} onChange={(event) => setQ(event.target.value)} />
       </section>
       {filtered.length === 0 ? (
         <Empty title="No agents" body="Describe a job in the builder and publish a spec." action={<button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>} />
+      ) : view === "list" ? (
+        <section className="list">
+          {filtered.map((agent) => (
+            <article className="card list-row" key={agent.id}>
+              <div>
+                <h2><Link to={`/agents/${agent.id}`}>{agent.name}</Link></h2>
+                <p className="lede" style={{ margin: 0 }}>{agent.owner}</p>
+              </div>
+              <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
+              <p className="lede" style={{ margin: 0 }}>{agent.schedule?.cron || agent.schedule?.mode || "—"} · {formatWhen(agent.schedule?.next_run_at)}</p>
+              <AgentActions onRun={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")} onCopy={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")} onDelete={() => setPending(agent)} />
+            </article>
+          ))}
+        </section>
       ) : (
         <section className="agent-grid">
           {filtered.map((agent) => (
@@ -71,11 +89,7 @@ export function Agents() {
                 <div><dt>Next run</dt><dd>{formatWhen(agent.schedule?.next_run_at)}</dd></div>
                 <div><dt>Updated</dt><dd>{formatWhen(agent.updated_at)}</dd></div>
               </dl>
-              <div className="row">
-                <button className="btn" type="button" onClick={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")}>Run</button>
-                <button className="btn-ghost" type="button" onClick={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")}>Duplicate</button>
-                <button className="btn-danger" type="button" onClick={() => setPending(agent)}>Delete</button>
-              </div>
+              <AgentActions onRun={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")} onCopy={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")} onDelete={() => setPending(agent)} />
             </article>
           ))}
         </section>
@@ -91,5 +105,15 @@ export function Agents() {
       )}
       <Toast message={toast} />
     </>
+  );
+}
+
+function AgentActions({ onRun, onCopy, onDelete }: { onRun: () => void; onCopy: () => void; onDelete: () => void }) {
+  return (
+    <div className="row">
+      <button className="btn" type="button" onClick={() => void onRun()}>Run</button>
+      <button className="btn-ghost" type="button" onClick={() => void onCopy()}>Duplicate</button>
+      <button className="btn-danger" type="button" onClick={onDelete}>Delete</button>
+    </div>
   );
 }

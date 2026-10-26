@@ -1,7 +1,7 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge, DataTable, Empty, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
@@ -58,7 +58,7 @@ export function Dashboard() {
       <section className="grid-6">
         <Kpi label="Published agents" value={formatNumber(data.active_agents)} />
         <Kpi label="Runs today" value={formatNumber(data.runs_today)} />
-        <Kpi label="Success rate" value={formatPercent(data.success_rate)} />
+        <Kpi label="Success rate" value={formatPercent(data.success_rate)} featured />
         <Kpi label="Avg. duration" value={formatDuration(data.avg_duration_seconds)} />
         <Kpi label="Needs review" value={formatNumber(data.needs_review)} />
         <Kpi label="Tokens today" value={formatNumber(data.tokens_today)} />
@@ -73,9 +73,9 @@ export function Dashboard() {
                 <XAxis dataKey="label" stroke="var(--muted)" />
                 <YAxis allowDecimals={false} stroke="var(--muted)" />
                 <Tooltip />
-                <Bar dataKey="succeeded" stackId="a" fill="#1d7a4d" name="Succeeded" isAnimationActive={false} />
-                <Bar dataKey="failed" stackId="a" fill="#9d2c3a" name="Failed" isAnimationActive={false} />
-                <Bar dataKey="needs_review" stackId="a" fill="#c48a2e" name="Needs review" isAnimationActive={false} />
+                <Bar dataKey="succeeded" stackId="a" fill="#34d399" name="Succeeded" isAnimationActive={false} />
+                <Bar dataKey="failed" stackId="a" fill="#fb7185" name="Failed" isAnimationActive={false} />
+                <Bar dataKey="needs_review" stackId="a" fill="#fbbf24" name="Needs review" isAnimationActive={false} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -84,13 +84,19 @@ export function Dashboard() {
           <h2>Duration trend</h2>
           <div className="chart-box">
             <ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 480, height: 240 }}>
-              <LineChart data={chart}>
+              <AreaChart data={chart}>
+                <defs>
+                  <linearGradient id="durationFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#a855f7" stopOpacity={0.55} />
+                    <stop offset="100%" stopColor="#a855f7" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" stroke="var(--muted)" />
                 <YAxis stroke="var(--muted)" />
                 <Tooltip />
-                <Line type="monotone" dataKey="avg_duration" stroke="#c48a2e" name="Seconds" connectNulls strokeWidth={2} dot={false} isAnimationActive={false} />
-              </LineChart>
+                <Area type="monotone" dataKey="avg_duration" stroke="#c084fc" fill="url(#durationFill)" name="Seconds" connectNulls strokeWidth={2} dot={false} isAnimationActive={false} />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </article>
@@ -117,6 +123,6 @@ export function Dashboard() {
   );
 }
 
-function Kpi({ label, value }: { label: string; value: string }) {
-  return <article className="card kpi"><div className="label">{label}</div><div className="value">{value}</div></article>;
+function Kpi({ label, value, featured }: { label: string; value: string; featured?: boolean }) {
+  return <article className={featured ? "card kpi featured" : "card kpi"}><div className="label">{label}</div><div className="value">{value}</div></article>;
 }

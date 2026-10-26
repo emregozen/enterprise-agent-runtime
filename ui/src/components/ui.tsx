@@ -14,6 +14,16 @@ import { copy } from "../lib/copy";
 import { statusLabel } from "../lib/format";
 import { codeTokens } from "../lib/highlight";
 
+export function ViewToggle({ value, options, onChange }: { value: string; options: { id: string; label: string }[]; onChange: (id: string) => void }) {
+  return (
+    <div className="view-toggle" role="group" aria-label="Layout">
+      {options.map((option) => (
+        <button key={option.id} type="button" className={value === option.id ? "on" : ""} aria-pressed={value === option.id} onClick={() => onChange(option.id)}>{option.label}</button>
+      ))}
+    </div>
+  );
+}
+
 export function Badge({ status }: { status: string }) {
   const tone = status === "succeeded" || status === "published" ? "ok"
     : status === "failed" || status === "deleted" ? "bad"

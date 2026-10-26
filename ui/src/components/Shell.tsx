@@ -59,7 +59,7 @@ export function Shell() {
           <span className="mark" aria-hidden>A</span>
           <span>
             <span>Control plane</span>
-            <strong>Agent <em>Runtime</em></strong>
+            <strong>Agent Runtime</strong>
           </span>
         </NavLink>
         <nav className="nav" aria-label="Primary">
