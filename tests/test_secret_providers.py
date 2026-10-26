@@ -398,6 +398,8 @@ def test_api_stores_a_reference_and_drops_a_pasted_key(db):
         saved = db.query(DataSourceRecord).filter(DataSourceRecord.name == "oracle-ccp").one()
         assert saved.password_ciphertext == ""
         assert saved.secret_path == "agent-runtime/oracle-sales/password"
+        assert saved.secret_form == "password"
+        assert payload["secret_form"] == "password"
 
 
 def test_ccp_datasource_reference_has_no_ciphertext(db):
@@ -435,6 +437,195 @@ def test_ccp_datasource_reference_has_no_ciphertext(db):
         row = db.query(DataSourceRecord).filter(DataSourceRecord.name == "pg-ccp").one()
         assert row.password_ciphertext == ""
         assert row.secret_ref["safe"] == "TestSafe"
+
+
+def test_url_form_uses_the_raw_value_and_password_form_refuses_a_url_looking_secret(db, pam_server, monkeypatch):
+    monkeypatch.setattr("secret_sources.resolve.read_secret_data", lambda name, namespace: {"api_key": "host-api-key"})
+    provider = _conjur(db, pam_server)
+    url_row = DataSourceRecord(
+        name="postgres-sales",
+        dialect="postgres",
+        dsn_env="SALES_DATABASE_URL",
+        allow_tables=["sales"],
+        host="",
+        username="",
+        secret_backend="conjur",
+        secret_provider_id=provider.id,
+        secret_path="agent-runtime/postgres-sales/password",
+        secret_form="url",
+    )
+    db.add(url_row)
+    db.commit()
+    cache_clear()
+    materialized = materialize_sources(db, [url_row])
+    assert materialized[0]["dsn"] == "db-password-from-conjur"
+    assert materialized[0]["k8s_secret_name"] is None
+    url_row.secret_form = "password"
+    db.commit()
+    cache_clear()
+    previous = _Silent.conjur_secret
+    _Silent.conjur_secret = "postgresql://sales_ro:gizli-parola@db.internal/sales"
+    try:
+        with pytest.raises(ServiceError) as caught:
+            materialize_sources(db, [url_row])
+        assert caught.value.status_code == 400
+        assert "sunucu" in str(caught.value)
+        assert "gizli-parola" not in str(caught.value)
+        assert "postgresql://" not in str(caught.value)
+    finally:
+        _Silent.conjur_secret = previous
+        cache_clear()
+
+
+def test_kubernetes_password_form_builds_the_dsn_into_the_run_secret(db, monkeypatch):
+    monkeypatch.setattr(
+        "secret_sources.resolve.read_secret_data",
+        lambda name, namespace: {"password": "sales-secret"},
+    )
+    row = DataSourceRecord(
+        name="pg-k8s",
+        dialect="postgres",
+        dsn_env="DS_PG_K8S",
+        allow_tables=["sales"],
+        host="db.internal",
+        port=5432,
+        database_name="sales",
+        username="sales_ro",
+        secret_backend="kubernetes",
+        k8s_secret_name="ds-pg",
+        k8s_secret_key="password",
+        secret_form="password",
+    )
+    db.add(row)
+    db.commit()
+    materialized = materialize_sources(db, [row])
+    assert materialized[0]["k8s_secret_name"] is None
+    assert materialized[0]["dsn"].startswith("postgresql+psycopg://sales_ro:sales-secret@db.internal:5432/sales")
+    kept = DataSourceRecord(
+        name="pg-k8s-url",
+        dialect="postgres",
+        dsn_env="DS_PG_K8S_URL",
+        allow_tables=["sales"],
+        secret_backend="kubernetes",
+        k8s_secret_name="ds-postgres-sales",
+        k8s_secret_key="dsn",
+        secret_form="url",
+    )
+    db.add(kept)
+    db.commit()
+    external = materialize_sources(db, [kept])
+    assert external[0]["dsn"] == ""
+    assert external[0]["k8s_secret_name"] == "ds-postgres-sales"
+
+
+def test_migration_marks_empty_host_external_refs_as_url(db):
+    from control_plane.db import get_engine
+    from control_plane.migrate import apply_migrations
+
+    db.add_all(
+        [
+            DataSourceRecord(
+                name="postgres-sales",
+                dialect="postgres",
+                dsn_env="SALES_DATABASE_URL",
+                allow_tables=["sales"],
+                host="",
+                username="",
+                secret_backend="conjur",
+                secret_path="agent-runtime/postgres-sales/password",
+                secret_form="password",
+            ),
+            DataSourceRecord(
+                name="oracle-sales",
+                dialect="oracle",
+                dsn_env="DS_ORACLE",
+                allow_tables=["SALES"],
+                host="oracle.example",
+                username="sales_ro",
+                secret_backend="conjur",
+                secret_path="agent-runtime/oracle-sales/password",
+                secret_form="password",
+            ),
+            DataSourceRecord(
+                name="legacy-k8s",
+                dialect="postgres",
+                dsn_env="DS_LEGACY",
+                allow_tables=["sales"],
+                host="",
+                username="",
+                secret_backend="db",
+                k8s_secret_name="ds-postgres-sales",
+                password_ciphertext="",
+                secret_form="password",
+            ),
+            DataSourceRecord(
+                name="platform-db",
+                dialect="postgres",
+                dsn_env="DS_PLATFORM",
+                allow_tables=["sales"],
+                host="",
+                username="",
+                secret_backend="db",
+                password_ciphertext="ciphertext-stays",
+                secret_form="password",
+            ),
+        ]
+    )
+    db.commit()
+    with get_engine().begin() as conn:
+        apply_migrations(conn)
+    db.expire_all()
+    forms = {row.name: row.secret_form for row in db.query(DataSourceRecord).all()}
+    assert forms["postgres-sales"] == "url"
+    assert forms["oracle-sales"] == "password"
+    assert forms["legacy-k8s"] == "url"
+    assert forms["platform-db"] == "password"
+
+
+def test_api_url_form_allows_an_empty_host_and_password_form_does_not(db):
+    provider = SecretProvider(
+        name="conjur-form",
+        kind="conjur",
+        base_url="http://conjur.conjur-test.svc",
+        account="agentrt",
+        auth_method="api-key",
+        config={"login": "host/agent-runtime/control"},
+        credential_secret_name="conjur-host",
+        enabled=True,
+    )
+    db.add(provider)
+    db.commit()
+    with TestClient(create_app()) as client:
+        missing = client.post(
+            "/api/datasources",
+            json={
+                "name": "pg-missing-host",
+                "dialect": "postgres",
+                "allow_tables": ["sales"],
+                "secret_backend": "conjur",
+                "secret_provider_id": str(provider.id),
+                "secret_path": "agent-runtime/postgres-sales/password",
+                "secret_form": "password",
+            },
+        )
+        assert missing.status_code == 400
+        assert "sunucu" in missing.text
+        created = client.post(
+            "/api/datasources",
+            json={
+                "name": "pg-url",
+                "dialect": "postgres",
+                "allow_tables": ["sales"],
+                "secret_backend": "conjur",
+                "secret_provider_id": str(provider.id),
+                "secret_path": "agent-runtime/postgres-sales/password",
+                "secret_form": "url",
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["secret_form"] == "url"
+        assert created.json()["host"] == ""
+        assert "password" not in created.json()
 
 
 def _capture_logs() -> list[str]:

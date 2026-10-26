@@ -72,6 +72,7 @@ def datasource_out(row: DataSourceRecord) -> dict:
         "secret_provider_id": str(row.secret_provider_id) if row.secret_provider_id else None,
         "secret_path": row.secret_path or "",
         "secret_ref": row.secret_ref or {},
+        "secret_form": _secret_form(row),
         "host": row.host or "",
         "port": row.port,
         "database_name": row.database_name or "",
@@ -109,6 +110,7 @@ def apply_datasource(db: Session, row: DataSourceRecord, body, *, creating: bool
     row.username = (body.username or "").strip()
     row.options = dict(body.options or {})
     row.read_only = bool(body.read_only)
+    row.secret_form = _normalize_secret_form(getattr(body, "secret_form", None) or getattr(row, "secret_form", None))
     if creating:
         row.name = body.name.strip()
         row.dsn_env = (body.dsn_env or "").strip() or _dsn_env_for(row.name)
@@ -122,6 +124,7 @@ def apply_datasource(db: Session, row: DataSourceRecord, body, *, creating: bool
         if body.password:
             row.password_ciphertext = encrypt_secret(body.password)
             row.password_hint = secret_hint(body.password)
+    _require_password_form_fields(row)
 
 
 def _assign_secret_source(db: Session, row, body, *, kind: str) -> None:
@@ -165,7 +168,11 @@ def _assign_secret_source(db: Session, row, body, *, kind: str) -> None:
     row.secret_ref = {}
     if backend == "kubernetes":
         name = (body.k8s_secret_name or "").strip()
-        key = (body.k8s_secret_key or "").strip() or ("dsn" if kind == "password" else "api_key")
+        if kind == "password":
+            fallback = "dsn" if _secret_form(row) == "url" else "password"
+        else:
+            fallback = "api_key"
+        key = (body.k8s_secret_key or "").strip() or fallback
         if not name:
             raise ServiceError("Kubernetes Secret adı gerekli", 400)
         row.k8s_secret_name = name
@@ -229,6 +236,42 @@ def datasource_dsn(row: DataSourceRecord, *, require: bool) -> str:
     return ""
 
 
+def _secret_form(row: DataSourceRecord) -> str:
+    form = (getattr(row, "secret_form", None) or "password").strip() or "password"
+    return form if form in {"password", "url"} else "password"
+
+
+def _normalize_secret_form(value: str | None) -> str:
+    from control_plane.service import ServiceError
+
+    form = (value or "password").strip() or "password"
+    if form not in {"password", "url"}:
+        raise ServiceError("biçim parola ya da tam adres olmalı", 400)
+    return form
+
+
+def _require_password_form_fields(row: DataSourceRecord) -> None:
+    from control_plane.service import ServiceError
+    from secret_sources.resolve import effective_backend
+
+    if _secret_form(row) != "password":
+        return
+    backend = effective_backend(row, "password_ciphertext")
+    if backend in {"kubernetes", "conjur", "ccp", "vault"} and not ((row.host or "").strip() and (row.username or "").strip()):
+        raise ServiceError("parola biçiminde sunucu ve kullanıcı gerekli", 400)
+
+
+def _dsn_from_password(row: DataSourceRecord, password: str) -> str:
+    from control_plane.service import ServiceError
+
+    if not ((row.host or "").strip() and (row.username or "").strip()):
+        raise ServiceError(
+            "parola biçiminde sunucu ve kullanıcı gerekli. Tam bağlantı adresi kasadaysa biçimi tam adres yapın.",
+            400,
+        )
+    return _build_dsn(row, password)
+
+
 def _build_dsn(row: DataSourceRecord, password: str) -> str:
     user = quote(row.username, safe="")
     secret = quote(password, safe="")
@@ -266,16 +309,16 @@ def connection_material(db: Session, row: DataSourceRecord) -> tuple[str, list[s
             settings = get_settings()
             value = resolve_kubernetes_value(
                 row.k8s_secret_name or "",
-                row.k8s_secret_key or "dsn",
+                row.k8s_secret_key or ("dsn" if _secret_form(row) == "url" else "password"),
                 [settings.run_namespace, settings.secret_namespace],
             )
         else:
             value = fetch_provider_secret(db, row.secret_provider_id, row.secret_path or "", row.secret_ref or {})
     except SecretProviderError as exc:
         raise ServiceError(str(exc), 502) from exc
-    if row.host and row.username and "://" not in value:
-        return _build_dsn(row, value), [value, row.username or ""]
-    return value, [value, row.username or ""]
+    if _secret_form(row) == "url":
+        return value, [value, row.username or ""]
+    return _dsn_from_password(row, value), [value, row.username or ""]
 
 
 def materialized_source(db: Session, row: DataSourceRecord) -> dict:
@@ -291,7 +334,8 @@ def materialized_source(db: Session, row: DataSourceRecord) -> dict:
         "allow_tables": list(row.allow_tables),
         "sensitivity": row.sensitivity,
     }
-    if backend == "kubernetes":
+    form = _secret_form(row)
+    if backend == "kubernetes" and form == "url":
         if not row.k8s_secret_name:
             raise ServiceError(f"{row.name} için Kubernetes Secret adı yok", 400)
         return {
@@ -300,12 +344,26 @@ def materialized_source(db: Session, row: DataSourceRecord) -> dict:
             "k8s_secret_name": row.k8s_secret_name,
             "k8s_secret_key": row.k8s_secret_key or "dsn",
         }
+    if backend == "kubernetes":
+        from secret_sources.resolve import resolve_kubernetes_value
+        from shared.config import get_settings
+
+        settings = get_settings()
+        try:
+            value = resolve_kubernetes_value(
+                row.k8s_secret_name or "",
+                row.k8s_secret_key or "password",
+                [settings.run_namespace, settings.secret_namespace],
+            )
+        except SecretProviderError as exc:
+            raise ServiceError(str(exc), 502) from exc
+        return {**payload, "dsn": _dsn_from_password(row, value), "k8s_secret_name": None, "k8s_secret_key": None}
     if backend in {"conjur", "ccp", "vault"}:
         try:
             value = fetch_provider_secret(db, row.secret_provider_id, row.secret_path or "", row.secret_ref or {})
         except SecretProviderError as exc:
             raise ServiceError(str(exc), 502) from exc
-        dsn = _build_dsn(row, value) if row.host and row.username else value
+        dsn = value if form == "url" else _dsn_from_password(row, value)
         return {**payload, "dsn": dsn, "k8s_secret_name": None, "k8s_secret_key": None}
     dsn = datasource_dsn(row, require=False)
     if not dsn and not row.k8s_secret_name:

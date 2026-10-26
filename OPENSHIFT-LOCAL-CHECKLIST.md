@@ -28,10 +28,13 @@ oc get ns agent-runs >/dev/null 2>&1 || oc create namespace agent-runs
 oc start-build agent-runtime-py312 --from-dir=. --follow -n agent-runtime
 oc start-build agent-runtime-ui --from-dir=ui --follow -n agent-runtime
 helm upgrade --install agent-runtime deploy/helm/agent-runtime \
-  --namespace agent-runtime --create-namespace \
+  --namespace agent-runtime --create-namespace --force-conflicts \
   -f deploy/helm/agent-runtime/values-crc.yaml \
   -f deploy/helm/agent-runtime/values-crc-small.yaml \
   -f deploy/helm/agent-runtime/values-crc-deepseek.yaml
+# Helm 4 server-side apply kullanır. imageTriggers kapsayıcı .image alanını
+# openshift-controller-manager'a verir; --force-conflicts olmadan yükseltme
+# "conflict ... .image" ile durur. Tetikleyici özeti hemen yeniden yazar.
 # Etiket aynı kaldıysa Helm pod şablonunu değiştirmez ve eski imaj çalışmaya devam eder.
 # values-crc imageTriggers açar. Tetikleyici Deployment'ın kendi metadata'sındadır;
 # pod şablonuna konursa OpenShift derlemeden sonra podu yenilemez. Doğru yerdeyse
@@ -86,13 +89,13 @@ oc -n agent-runtime create secret generic agent-runtime-master-key \
   --dry-run=client -o yaml | oc apply -f -
 oc rollout restart deploy/control-plane -n agent-runtime
 oc rollout status deploy/control-plane -n agent-runtime
-oc exec -n agent-runtime deploy/control-plane -- python -m control_plane.rotate_master_key
+oc exec -n agent-runtime deploy/control-plane -- python -m control_plane.rotate_master_key --yes
 oc -n agent-runtime patch secret agent-runtime-master-key --type=json -p '[{"op":"remove","path":"/data/previous"}]'
 oc rollout restart deploy/control-plane -n agent-runtime
 rm -f /tmp/old-key /tmp/new-key
 ```
 
-Beklenen son satır: `yeniden şifrelenen alan: N`. `N` sıfırsa kayıtlı parola yoktur. Çözülemedi derse `previous` eski anahtar değildir; Secret’ı yedekten geri koyun, podu yeniden başlatın. Döndürme bitmeden `helm upgrade` çalışırsa chart, Secret’ta duran `previous` alanını yerinde bırakır. Alan silindikten sonraki upgrade onu geri getirmez.
+Argümansız çağrı yalnız sayar ve yazmaz; son satırda `kuru çalıştırma` görünür. `--help` veritabanını açmaz. Yazmak için `--yes` gerekir. Beklenen son satır: `yeniden şifrelenen alan: N`. `N` sıfırsa kayıtlı parola yoktur. Çözülemedi derse `previous` eski anahtar değildir; Secret’ı yedekten geri koyun, podu yeniden başlatın. Döndürme bitmeden `helm upgrade` çalışırsa chart, Secret’ta duran `previous` alanını yerinde bırakır. Alan silindikten sonraki upgrade onu geri getirmez.
 
 ## 1. Küme ayakta
 
@@ -206,9 +209,11 @@ ImageStream adı, push edilen depo adıyla birebir olmayabilir. Asıl kontrol po
 
 ```bash
 helm upgrade --install agent-runtime deploy/helm/agent-runtime \
-  --namespace agent-runtime --create-namespace \
+  --namespace agent-runtime --create-namespace --force-conflicts \
   -f deploy/helm/agent-runtime/values-crc.yaml
 ```
+
+Helm 4 için `--force-conflicts` gerekir; gerekçe kurulum bölümündedir.
 
 Dar sanal makinede aynı komuta `-f deploy/helm/agent-runtime/values-crc-small.yaml` ekleyin. Kontrol düzlemi isteği 50m / 256Mi, arayüz 20m / 96Mi, Postgres 50m / 256Mi, koşum isteği 50m / 128Mi ve geçici disk 1Gi olur.
 
@@ -397,7 +402,7 @@ Run podu varsayılan olarak yalnızca DNS, kontrol düzlemi `:8841` ve Postgres 
 
 ```bash
 helm upgrade agent-runtime deploy/helm/agent-runtime \
-  --namespace agent-runtime \
+  --namespace agent-runtime --force-conflicts \
   -f deploy/helm/agent-runtime/values-crc.yaml \
   --set-json 'networkPolicy.extraEgress=[{"name":"llm","cidr":"10.20.0.0/24","port":443}]'
 ```
@@ -453,7 +458,7 @@ Bu, şirketteki CyberArk kasasının ücretsiz karşılığıdır. Ticari PAM ku
 
 Düğüm istekleri yaklaşık %92 doludur ve boş bellek yaklaşık 3 GB'dir. Conjur ayrı bir Postgres açmaz; `agent-runtime` Postgres'inde `conjur` adlı ayrı bir veritabanı kullanır. İstek 50m CPU ve 384Mi bellektir. Pod `Pending` kalırsa önce Oracle denemesini sıfıra indirin (`oc -n oracle-test scale deploy/oracle-free --replicas=0`). Deneme bitince Conjur'u da sıfıra indirin; istekler düğümde kalmasın.
 
-Sunucu 80 portunu dinler. `restricted-v2` buna izin vermez. `anyuid` yalnız `conjur-test` ad alanındaki `conjur` hesabına bağlanır. Başka bir hesaba vermeyin.
+Sunucu 80 portunu dinler. Deployment argümanı `server -p 80` olmalıdır; imajın giriş noktası `conjurctl` yalnız yardım basar. `restricted-v2` buna izin vermez. `anyuid` yalnız `conjur-test` ad alanındaki `conjur` hesabına bağlanır. Başka bir hesaba vermeyin.
 
 Ağ: Conjur'a yalnız `agent-runtime` içindeki kontrol düzlemi girebilir. Koşum pod'unun çıkış listesinde Conjur yoktur. Kontrol düzlemi parolayı koşum başlarken okur, yalnız o koşumun Secret'ına yazar. Executor bu değeri görmez.
 
@@ -479,9 +484,11 @@ Yukarıdaki değerleri kendi deneme parolalarınızla değiştirin. Betik şunla
 
 Host API anahtarı `agent-runtime` ad alanındaki `conjur-host` Secret'ına, `api_key` anahtarıyla yazılır. Düz metin olarak arayüze girilmez. Kontrol düzlemi bu Secret'ı kendi ad alanında `get` ile okur (`agent-controller-secrets`). Koşum hesabı bu Role'a bağlı değildir.
 
-Beklenen: `oc -n conjur-test get pods` Ready, betiğin son satırı `Conjur hazır`. Arayüzde Gizli Bilgi Kaynakları sayfasına bir Conjur kaydı ekleyin: adres `http://conjur.conjur-test.svc`, hesap `agentrt`, kimlik `api-key`, host `host/agent-runtime/control`, Secret adı `conjur-host`. Veri kaynağında Parola kaynağı olarak CyberArk Conjur ve değişken yolunu seçin. Bağlantıyı deneyin; parola veritabanına yazılmaz.
+Dosyalardaki `postgres-sales`, `oracle-sales` ve `deepseek` yalnız paroladır (LLM için API anahtarıdır). Sunucu, port, veritabanı ve kullanıcı veri kaynağının kendi alanlarıdır. Tam bağlantı adresi kasada duruyorsa arayüzde biçimi Tam bağlantı adresi yapın. Sunucusu ve kullanıcısı boş eski dış kayıtlar yükseltmede bu biçime alınır; CRC'de `postgres-sales` kasada tam adresi tutuyorsa kayıt `url` kalır ve çalışmaya devam eder. Parolayı ayırınca biçimi Parola yapıp sunucu ve kullanıcıyı doldurun.
 
-Hesap daha önce açıldıysa betik admin anahtarını yeniden üretmez. İkinci çalıştırmada gizli dizine `admin.api` dosyasını koyun. Dosyayı ekrana basmayın.
+Beklenen: `oc -n conjur-test get pods` Ready, betiğin son satırı `Conjur hazır`. Arayüzde Gizli Bilgi Kaynakları sayfasına bir Conjur kaydı ekleyin: adres `http://conjur.conjur-test.svc`, hesap `agentrt`, kimlik `api-key`, host `host/agent-runtime/control`, Secret adı `conjur-host`. Veri kaynağında Parola kaynağı olarak CyberArk Conjur, biçim Parola, değişken yolu ve sunucu, port, veritabanı, kullanıcı alanlarını doldurun. Bağlantıyı deneyin; parola veritabanına yazılmaz.
+
+İlk kurulum yeni admin anahtarını gizli dizine `admin.api` olarak yazar (mod 600) ve ekrana basmaz. Hesap zaten varsa `conjurctl` çıkış kodu 0 olsa da betik bunu metinden anlar ve anahtarı yeniden üretmez. İkinci çalıştırmada aynı `admin.api` dosyası durmalıdır.
 
 Deneme bitince:
 

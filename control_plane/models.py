@@ -65,6 +65,8 @@ class DataSourceRecord(Base):
     )
     secret_path: Mapped[str] = mapped_column(Text, default="")
     secret_ref: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # password: the reference is only the password. url: the reference is the full connection URL.
+    secret_form: Mapped[str] = mapped_column(String(16), default="password")
     options: Mapped[dict] = mapped_column(JSONB, default=dict)
     read_only: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

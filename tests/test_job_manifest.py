@@ -91,3 +91,48 @@ def test_external_datasource_secret_is_not_copied_into_the_run_secret():
     harness = job["spec"]["template"]["spec"]["containers"][0]
     ref = next(item for item in harness["env"] if item["name"] == "SALES_DATABASE_URL")
     assert ref["valueFrom"]["secretKeyRef"]["name"] == "ds-postgres-sales"
+
+
+def test_provider_key_from_conjur_is_not_replaced_by_global_llm_secret():
+    settings = get_settings().model_copy(update={"llm_mode": "openai", "llm_k8s_secret_name": "llm-deepseek"})
+    spec = AgentSpec.model_validate(SPEC).canonical()
+    llm = {
+        "base_url": "https://api.example",
+        "model": "m",
+        "api_key": "conjur-value",
+        "k8s_secret_name": "",
+        "k8s_secret_key": "api_key",
+        "temperature": 0,
+        "reasoning_effort": "",
+        "name": "deepseek-flash",
+    }
+    secret, job = build_run_manifests(
+        run_id=uuid.uuid4(),
+        agent_name="a",
+        spec_version=1,
+        spec=spec,
+        token="tok",
+        datasources=[],
+        settings=settings,
+        llm_api_key="conjur-value",
+        llm=llm,
+    )
+    assert secret["stringData"]["LLM_API_KEY"] == "conjur-value"
+    harness = next(c for c in job["spec"]["template"]["spec"]["containers"] if c["name"] == "harness")
+    ref = next(item for item in harness["env"] if item["name"] == "LLM_API_KEY")
+    assert ref["valueFrom"]["secretKeyRef"]["name"] == secret["metadata"]["name"]
+    assert "conjur-value" not in json.dumps(job)
+    secret2, _job2 = build_run_manifests(
+        run_id=uuid.uuid4(),
+        agent_name="a",
+        spec_version=1,
+        spec=spec,
+        token="tok",
+        datasources=[],
+        settings=settings,
+        llm={**llm, "api_key": ""},
+    )
+    harness2 = next(c for c in _job2["spec"]["template"]["spec"]["containers"] if c["name"] == "harness")
+    ref2 = next(item for item in harness2["env"] if item["name"] == "LLM_API_KEY")
+    assert ref2["valueFrom"]["secretKeyRef"]["name"] == "llm-deepseek"
+    assert "LLM_API_KEY" not in secret2["stringData"]

@@ -105,7 +105,11 @@ def build_run_manifests(
     if resolved.get("reasoning_effort"):
         env.append({"name": "LLM_REASONING_EFFORT", "value": str(resolved["reasoning_effort"])})
     if settings.llm_mode == "openai":
-        secret_ref = resolved.get("k8s_secret_name") or settings.llm_k8s_secret_name
+        # A key resolved from the provider (DB, Conjur, CCP) wins; the global Secret is only a fallback.
+        if llm is not None and resolved.get("api_key"):
+            secret_ref = resolved.get("k8s_secret_name") or ""
+        else:
+            secret_ref = resolved.get("k8s_secret_name") or settings.llm_k8s_secret_name
         secret_key = resolved.get("k8s_secret_key") or settings.llm_k8s_secret_key
         if secret_ref:
             env.append(

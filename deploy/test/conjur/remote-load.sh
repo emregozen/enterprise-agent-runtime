@@ -8,7 +8,8 @@ code=$(curl -sS -o token -w "%{http_code}" -H "Accept-Encoding: base64" --data-b
   http://127.0.0.1/authn/agentrt/admin/authenticate)
 echo "auth HTTP ${code}"
 test "$code" = "200"
-ruby -e 'token = File.read("token").strip; File.write("authz.cfg", %(header = "Authorization: Token token=\\"#{token}\\"\n"))'
+# The closing quote must be on the same line; otherwise curl sends a broken header (Puma 400).
+ruby -e 'token = File.read("token").strip; File.write("authz.cfg", "header = \"Authorization: Token token=\\\"" + token + "\\\"\"\n")'
 code=$(curl -sS -o policy.out -w "%{http_code}" --config authz.cfg -X POST --data-binary @policy.yml \
   http://127.0.0.1/policies/agentrt/policy/root)
 echo "policy HTTP ${code}"

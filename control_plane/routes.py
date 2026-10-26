@@ -57,6 +57,7 @@ class DatasourceIn(BaseModel):
     secret_provider_id: uuid.UUID | None = None
     secret_path: str = ""
     secret_ref: dict = Field(default_factory=dict)
+    secret_form: str = "password"
 
 
 class DatasourceUpdate(BaseModel):
@@ -79,6 +80,7 @@ class DatasourceUpdate(BaseModel):
     secret_provider_id: uuid.UUID | None = None
     secret_path: str | None = None
     secret_ref: dict | None = None
+    secret_form: str | None = None
 
 
 class DraftIn(BaseModel):
@@ -730,6 +732,7 @@ def patch_datasource(datasource_id: uuid.UUID, body: DatasourceUpdate, db: Sessi
         secret_provider_id=row.secret_provider_id if body.secret_provider_id is None else body.secret_provider_id,
         secret_path=row.secret_path if body.secret_path is None else body.secret_path,
         secret_ref=row.secret_ref if body.secret_ref is None else body.secret_ref,
+        secret_form=row.secret_form if body.secret_form is None else body.secret_form,
     )
     try:
         apply_datasource(db, row, merged, creating=False, reset_secret_source=body.secret_backend is not None)

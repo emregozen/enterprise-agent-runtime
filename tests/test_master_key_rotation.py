@@ -1,7 +1,8 @@
+import pytest
 from cryptography.fernet import Fernet
 
 from control_plane.models import DataSourceRecord, LlmProvider
-from control_plane.rotate_master_key import RotationError, rotate_stored_secrets
+from control_plane.rotate_master_key import RotationError, main, rotate_stored_secrets
 from shared.config import get_settings
 from shared.crypto import decrypt_secret, encrypt_secret
 
@@ -86,3 +87,58 @@ def test_rotate_stops_when_the_old_key_is_missing(db, monkeypatch):
     finally:
         monkeypatch.setenv("CONFIG_MASTER_KEY", "test-master-key-agent-runtime-poc")
         get_settings.cache_clear()
+
+
+def test_cli_help_and_unknown_args_do_not_open_the_database(monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise AssertionError("veritabanı açılmamalı")
+
+    monkeypatch.setattr("control_plane.db.SessionLocal", boom)
+    with pytest.raises(SystemExit) as helped:
+        main(["--help"])
+    assert helped.value.code in (0, None)
+    with pytest.raises(SystemExit) as unknown:
+        main(["--rotate"])
+    assert unknown.value.code == 2
+    with pytest.raises(SystemExit) as both:
+        main(["--yes", "--dry-run"])
+    assert both.value.code == 2
+
+
+def test_cli_dry_run_is_the_default_and_yes_writes(db, capsys):
+    source = DataSourceRecord(
+        name="rotate-cli",
+        dialect="postgres",
+        dsn_env="DS_ROTATE_CLI",
+        allow_tables=["sales"],
+        password_ciphertext=encrypt_secret("gizli-parola"),
+    )
+    empty = DataSourceRecord(
+        name="rotate-empty",
+        dialect="postgres",
+        dsn_env="DS_ROTATE_EMPTY",
+        allow_tables=["sales"],
+        password_ciphertext="",
+    )
+    db.add(source)
+    db.add(empty)
+    db.commit()
+    stored = source.password_ciphertext
+    main([])
+    db.expire_all()
+    assert source.password_ciphertext == stored
+    out = capsys.readouterr().out
+    assert "kuru çalıştırma" in out
+    assert "gizli-parola" not in out
+    main(["--dry-run"])
+    db.expire_all()
+    assert source.password_ciphertext == stored
+    assert "gizli-parola" not in capsys.readouterr().out
+    main(["--yes"])
+    db.expire_all()
+    assert source.password_ciphertext != stored
+    assert decrypt_secret(source.password_ciphertext) == "gizli-parola"
+    assert empty.password_ciphertext == ""
+    written = capsys.readouterr().out
+    assert "kuru çalıştırma" not in written
+    assert "gizli-parola" not in written

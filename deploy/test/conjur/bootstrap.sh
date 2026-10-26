@@ -73,7 +73,9 @@ PY
 
 oc apply -f "$root/namespace.yaml"
 oc apply -f "$root/scc.yaml"
-oc -n agent-runtime cp "$work/init.sql" deploy/postgres:/tmp/conjur-init.sql
+# oc cp needs a pod name; deploy/postgres is not accepted.
+pgpod=$(oc -n agent-runtime get pod -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+oc -n agent-runtime cp "$work/init.sql" "$pgpod:/tmp/conjur-init.sql"
 oc -n agent-runtime exec deploy/postgres -- bash -c 'export PGPASSWORD="$POSTGRESQL_ADMIN_PASSWORD"; psql -U postgres -h 127.0.0.1 -d postgres -v ON_ERROR_STOP=1 -q -f /tmp/conjur-init.sql'
 oc -n agent-runtime exec deploy/postgres -- rm -f /tmp/conjur-init.sql
 rm -f "$work/init.sql"
@@ -85,15 +87,18 @@ oc apply -f "$root/networkpolicy.yaml"
 oc -n conjur-test rollout status deploy/conjur --timeout=180s
 
 pod=$(oc -n conjur-test get pod -l app=conjur -o jsonpath='{.items[0].metadata.name}')
-if ! oc -n conjur-test exec "$pod" -- conjurctl account create agentrt >"$work/account.out" 2>&1; then
-  if grep -q "already exists" "$work/account.out"; then
-    echo "hesap zaten var"
-    rm -f "$work/account.out"
-  else
-    grep -v -E 'API key|[A-Za-z0-9]{30,}' "$work/account.out" >&2 || true
-    rm -f "$work/account.out"
-    exit 1
-  fi
+# conjurctl 1.24 exits 0 even when the account already exists, so check the text first.
+set +e
+oc -n conjur-test exec "$pod" -- conjurctl account create agentrt >"$work/account.out" 2>&1
+acct=$?
+set -e
+if grep -q "already exists" "$work/account.out"; then
+  echo "hesap zaten var"
+  rm -f "$work/account.out"
+elif [[ "$acct" -ne 0 ]]; then
+  grep -v -E 'API key|[A-Za-z0-9]{30,}' "$work/account.out" >&2 || true
+  rm -f "$work/account.out"
+  exit 1
 else
   python3 - "$work" <<'PY'
 import re
@@ -107,6 +112,10 @@ if not keys:
     raise SystemExit("admin anahtarı okunamadı")
 work.joinpath("admin.api").write_text(keys[-1], encoding="utf-8")
 PY
+  # Keep the new admin key for reruns; $work is deleted on exit.
+  cp "$work/admin.api" "$src/admin.api"
+  chmod 600 "$src/admin.api"
+  echo "admin anahtarı gizli dizine yazıldı: admin.api"
 fi
 
 if [[ ! -s "$work/admin.api" ]]; then

@@ -26,6 +26,7 @@ type Source = {
   secret_provider_id?: string | null;
   secret_path?: string;
   secret_ref?: { app_id?: string; safe?: string; object?: string; query?: string };
+  secret_form?: string;
 };
 
 type Provider = { id: string; name: string; kind: string; enabled: boolean };
@@ -77,12 +78,13 @@ export function DataSources() {
       password: backend === "db" ? form.password || null : null,
       secret_backend: backend,
       k8s_secret_name: backend === "kubernetes" ? form.k8s_secret_name : null,
-      k8s_secret_key: backend === "kubernetes" ? form.k8s_secret_key || "dsn" : null,
+      k8s_secret_key: backend === "kubernetes" ? form.k8s_secret_key || (form.secret_form === "url" ? "dsn" : "password") : null,
       secret_provider_id: backend === "conjur" || backend === "ccp" ? form.secret_provider_id || null : null,
       secret_path: backend === "conjur" ? form.secret_path : "",
       secret_ref: backend === "ccp"
         ? { app_id: form.ccp_app_id, safe: form.ccp_safe, object: form.ccp_object, query: form.ccp_query }
         : {},
+      secret_form: backend === "db" ? "password" : form.secret_form || "password",
     };
     try {
       if (editing) await api(`/api/datasources/${editing}`, { method: "PATCH", body: JSON.stringify(payload) });
@@ -134,7 +136,7 @@ export function DataSources() {
       <div className="page-head">
         <div>
           <h1>Veri Kaynakları</h1>
-          <p>Postgres ve Oracle. Parola platformda şifreli durabilir, bir Kubernetes Secret'a ya da CyberArk kaydına başvurabilir. Değer bir daha açık dönmez.</p>
+          <p>Postgres ve Oracle. Parola platformda şifreli durabilir, bir Kubernetes Secret'a ya da CyberArk kaydına başvurabilir. Başvuru varsayılan olarak yalnız paroladır; sunucu ve kullanıcı bu formdadır. Değer bir daha açık dönmez.</p>
         </div>
         <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>Yeni kaynak</button>
       </div>
@@ -159,7 +161,8 @@ export function DataSources() {
             <SecretSourceFields
               value={form}
               providers={providers}
-              k8sKeyHint="dsn"
+              k8sKeyHint={form.secret_form === "url" ? "dsn" : "password"}
+              showSecretForm
               onChange={(next: SecretSource) => setForm({ ...form, ...next, password: next.secret_backend === "db" ? form.password : "" })}
             />
             {form.secret_backend === "db" && (
