@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, CodeBlock, SkeletonRows } from "../components/ui";
+import { ActionButton, Badge, CodeBlock, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
+import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
+import { announceError, announceRun, notify } from "../lib/notify";
 
 type Version = { version: number; status: string; created_at: string; spec: Record<string, unknown> };
 type Detail = {
@@ -26,6 +29,7 @@ export function AgentDetail() {
   const [diff, setDiff] = useState("");
   const [error, setError] = useState("");
   const [goal, setGoal] = useState("");
+  const { run, pending } = useBusy();
 
   function load() {
     api<Detail>(`/api/agents/${id}`).then((body) => { setAgent(body); setGoal(body.description); }).catch((exc: ApiError) => setError(exc.message));
@@ -33,18 +37,56 @@ export function AgentDetail() {
   }
   useEffect(load, [id]);
 
-  async function saveGoal() {
+  function saveGoal() {
     if (!agent?.spec) return;
-    const spec = structuredClone(agent.spec) as { spec?: { goal?: string } };
-    if (spec.spec) spec.spec.goal = goal;
-    await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec, publish: true, description: goal }) });
-    load();
+    void run("save", async () => {
+      try {
+        const spec = structuredClone(agent.spec) as { spec?: { goal?: string } };
+        if (spec.spec) spec.spec.goal = goal;
+        await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec, publish: true, description: goal }) });
+        notify({ tone: "success", title: copy.savedVersion });
+        load();
+      } catch (exc) {
+        announceError(exc, copy.couldNotSave);
+      }
+    });
+  }
+
+  function startRun() {
+    if (!agent) return;
+    void run("run", async () => {
+      try {
+        const created = await api<{ id: string; agent_name: string }>(`/api/agents/${id}/runs`, { method: "POST", body: "{}" });
+        announceRun(created, agent.name);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function togglePause() {
+    if (!agent) return;
+    const paused = !agent.schedule?.paused;
+    void run("pause", async () => {
+      try {
+        await api(`/api/agents/${id}/pause`, { method: "POST", body: JSON.stringify({ paused }) });
+        notify({ tone: "info", title: paused ? copy.agentPaused : copy.agentResumed });
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
   }
 
   async function showDiff(left: number, right: number) {
-    const body = await api<{ diff: string }>(`/api/agents/${id}/diff?left=${left}&right=${right}`);
-    setDiff(body.diff || "No difference.");
-    setTab("versions");
+    try {
+      const body = await api<{ diff: string }>(`/api/agents/${id}/diff?left=${left}&right=${right}`);
+      setDiff(body.diff || "No difference.");
+      setTab("versions");
+    } catch (exc) {
+      announceError(exc);
+    }
   }
 
   if (error) return <div className="card">{error}</div>;
@@ -59,10 +101,10 @@ export function AgentDetail() {
         </div>
         <div className="row">
           <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
-          <button className="btn" type="button" onClick={() => api(`/api/agents/${id}/runs`, { method: "POST", body: "{}" }).then(load)}>Run now</button>
-          <button className="btn-ghost" type="button" onClick={() => api(`/api/agents/${id}/pause`, { method: "POST", body: JSON.stringify({ paused: !agent.schedule?.paused }) }).then(load)}>
+          <ActionButton busy={pending("run")} onClick={startRun}>Run now</ActionButton>
+          <ActionButton className="btn-ghost" busy={pending("pause")} onClick={togglePause}>
             {agent.schedule?.paused ? "Resume" : "Pause"}
-          </button>
+          </ActionButton>
         </div>
       </div>
       <div className="tabs">
@@ -76,7 +118,7 @@ export function AgentDetail() {
             <h2>Goal</h2>
             <textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Goal" />
             <div className="goal-actions">
-              <button className="btn" type="button" onClick={() => void saveGoal()}>Save as a new version</button>
+              <ActionButton busy={pending("save")} onClick={saveGoal}>Save as a new version</ActionButton>
             </div>
           </article>
           <article className="card">
@@ -108,8 +150,8 @@ export function AgentDetail() {
       )}
       {tab === "runs" && (
         <section className="card">
-          {runs.map((run) => (
-            <p key={run.id}><Badge status={run.status} /> <Link to={`/runs/${run.id}`}>{formatWhen(run.created_at)}</Link> · {run.trigger}</p>
+          {runs.map((item) => (
+            <p key={item.id}><Badge status={item.status} /> <Link to={`/runs/${item.id}`}>{formatWhen(item.created_at)}</Link> · {item.trigger}</p>
           ))}
           {runs.length === 0 && <p>This agent has no runs.</p>}
         </section>

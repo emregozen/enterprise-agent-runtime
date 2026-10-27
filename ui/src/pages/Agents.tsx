@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Badge, Empty, Modal, SkeletonRows, Toast, ViewToggle } from "../components/ui";
+import { ActionButton, Badge, ConfirmDialog, Empty, SkeletonRows, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
+import { announceError, announceRun, notify } from "../lib/notify";
 
 type Agent = {
   id: string;
@@ -21,22 +23,53 @@ export function Agents() {
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<Agent | null>(null);
-  const [toast, setToast] = useState("");
   const [view, setView] = useState("grid");
+  const { run, pending: isPending } = useBusy();
 
   function load() {
     api<Agent[]>("/api/agents").then(setRows).catch((exc: ApiError) => setError(exc.message));
   }
   useEffect(load, []);
 
-  async function act(path: string, method: string, ok: string) {
-    try {
-      await api(path, { method });
-      setToast(ok);
-      load();
-    } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : copy.couldNotComplete);
-    }
+  function startRun(agent: Agent) {
+    void run(`run:${agent.id}`, async () => {
+      try {
+        const created = await api<{ id: string; agent_name: string }>(`/api/agents/${agent.id}/runs`, { method: "POST", body: "{}" });
+        announceRun(created, agent.name);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function duplicate(agent: Agent) {
+    void run(`copy:${agent.id}`, async () => {
+      try {
+        const created = await api<{ id: string; name: string }>(`/api/agents/${agent.id}/duplicate`, { method: "POST" });
+        notify({
+          tone: "success",
+          title: copy.duplicatedAgent(created.name || agent.name),
+          actions: [{ label: copy.openCopy, href: `/agents/${created.id}` }],
+        });
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function remove(agent: Agent) {
+    void run(`delete:${agent.id}`, async () => {
+      try {
+        await api(`/api/agents/${agent.id}`, { method: "DELETE" });
+        notify({ tone: "success", title: copy.deletedAgent(agent.name) });
+        setPending(null);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
   }
 
   if (error) return <div className="card">{error}</div>;
@@ -59,7 +92,11 @@ export function Agents() {
         <input className="search" aria-label="Search agents" placeholder="Name or owner" value={q} onChange={(event) => setQ(event.target.value)} />
       </section>
       {filtered.length === 0 ? (
-        <Empty title="No agents" body="Describe a job in the builder and publish a spec." action={<button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>} />
+        <Empty
+          title={rows.length === 0 ? "No agents" : copy.noMatches}
+          body={rows.length === 0 ? "Describe a job in the builder and publish a spec." : "Try another name or owner."}
+          action={rows.length === 0 ? <button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button> : undefined}
+        />
       ) : view === "list" ? (
         <section className="list">
           {filtered.map((agent) => (
@@ -70,7 +107,7 @@ export function Agents() {
               </div>
               <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
               <p className="lede" style={{ margin: 0 }}>{agent.schedule?.cron || agent.schedule?.mode || "—"} · {formatWhen(agent.schedule?.next_run_at)}</p>
-              <AgentActions onRun={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")} onCopy={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")} onDelete={() => setPending(agent)} />
+              <AgentActions agent={agent} pending={isPending} onRun={() => startRun(agent)} onCopy={() => duplicate(agent)} onDelete={() => setPending(agent)} />
             </article>
           ))}
         </section>
@@ -89,31 +126,42 @@ export function Agents() {
                 <div><dt>Next run</dt><dd>{formatWhen(agent.schedule?.next_run_at)}</dd></div>
                 <div><dt>Updated</dt><dd>{formatWhen(agent.updated_at)}</dd></div>
               </dl>
-              <AgentActions onRun={() => act(`/api/agents/${agent.id}/runs`, "POST", "Run requested")} onCopy={() => act(`/api/agents/${agent.id}/duplicate`, "POST", "Duplicated")} onDelete={() => setPending(agent)} />
+              <AgentActions agent={agent} pending={isPending} onRun={() => startRun(agent)} onCopy={() => duplicate(agent)} onDelete={() => setPending(agent)} />
             </article>
           ))}
         </section>
       )}
       {pending && (
-        <Modal title="Delete agent" onClose={() => setPending(null)}>
-          <p><b>{pending.name}</b> will be hidden and its schedule will stop. Runs and artifacts remain.</p>
-          <div className="row">
-            <button className="btn-danger" type="button" onClick={() => { const id = pending.id; setPending(null); void act(`/api/agents/${id}`, "DELETE", "Agent deleted"); }}>Delete</button>
-            <button className="btn-ghost" type="button" onClick={() => setPending(null)}>Cancel</button>
-          </div>
-        </Modal>
+        <ConfirmDialog
+          title={copy.confirmDeleteTitle}
+          body={copy.confirmDeleteAgent(pending.name)}
+          busy={isPending(`delete:${pending.id}`)}
+          onConfirm={() => remove(pending)}
+          onClose={() => setPending(null)}
+        />
       )}
-      <Toast message={toast} />
     </>
   );
 }
 
-function AgentActions({ onRun, onCopy, onDelete }: { onRun: () => void; onCopy: () => void; onDelete: () => void }) {
+function AgentActions({
+  agent,
+  pending,
+  onRun,
+  onCopy,
+  onDelete,
+}: {
+  agent: Agent;
+  pending: (id: string) => boolean;
+  onRun: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
   return (
     <div className="row">
-      <button className="btn" type="button" onClick={() => void onRun()}>Run</button>
-      <button className="btn-ghost" type="button" onClick={() => void onCopy()}>Duplicate</button>
-      <button className="btn-danger" type="button" onClick={onDelete}>Delete</button>
+      <ActionButton busy={pending(`run:${agent.id}`)} onClick={onRun}>{copy.run}</ActionButton>
+      <ActionButton className="btn-ghost" busy={pending(`copy:${agent.id}`)} onClick={onCopy}>{copy.copy}</ActionButton>
+      <button className="btn-danger" type="button" onClick={onDelete}>{copy.delete}</button>
     </div>
   );
 }

@@ -1,14 +1,25 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge, DataTable, Empty, Modal, SkeletonRows, Toast, ViewToggle } from "../components/ui";
+import { Select } from "../components/Select";
+import { ActionButton, Badge, ConfirmDialog, DataTable, Empty, SkeletonRows, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { statusLabel, formatWhen } from "../lib/format";
+import { announceError, announceRun, notify } from "../lib/notify";
 
 type Run = { id: string; agent_name: string; status: string; trigger: string; created_at: string; spec_version: number };
 
-const STATUSES = ["", "running", "succeeded", "failed", "needs_review", "cancelled", "pending"];
+const STATUS_OPTIONS = [
+  { value: "", label: "All", description: "Every status" },
+  { value: "running", label: "Running", description: "In progress now" },
+  { value: "pending", label: "Pending", description: "Waiting to start" },
+  { value: "needs_review", label: "Needs review", description: "A person should look" },
+  { value: "failed", label: "Failed", description: "Stopped with an error" },
+  { value: "succeeded", label: "Succeeded", description: "Finished cleanly" },
+  { value: "cancelled", label: "Cancelled", description: "Stopped before the end" },
+];
 
 const BOARD = [
   { key: "running", title: "Running", tone: "info", statuses: ["running", "pending"] },
@@ -23,9 +34,10 @@ export function Runs() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
-  const [toast, setToast] = useState("");
-  const [confirm, setConfirm] = useState(false);
+  const [confirmOld, setConfirmOld] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
   const [view, setView] = useState("board");
+  const { run, pending } = useBusy();
 
   function load(nextStatus = status, nextQuery = q) {
     const params = new URLSearchParams({ limit: "100" });
@@ -35,14 +47,69 @@ export function Runs() {
   }
   useEffect(() => { load(status, q); }, [status, q]);
 
-  async function call(path: string, method: string, message: string) {
-    try {
-      await api(path, { method });
-      setToast(message);
-      load();
-    } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : copy.couldNotComplete);
-    }
+  function rerun(item: Run) {
+    void run(`rerun:${item.id}`, async () => {
+      try {
+        const created = await api<{ id: string; agent_name: string }>(`/api/runs/${item.id}/rerun`, { method: "POST" });
+        announceRun(created, item.agent_name);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function cancel(item: Run) {
+    void run(`cancel:${item.id}`, async () => {
+      try {
+        await api(`/api/runs/${item.id}/cancel`, { method: "POST" });
+        notify({ tone: "info", title: copy.cancelledRun });
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function remove(item: Run) {
+    void run(`delete:${item.id}`, async () => {
+      try {
+        await api(`/api/runs/${item.id}`, { method: "DELETE" });
+        notify({ tone: "success", title: copy.deletedRun });
+        setPendingDelete(null);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function removeOld() {
+    void run("bulk", async () => {
+      try {
+        const result = await api<{ deleted: number }>("/api/runs/bulk-delete", {
+          method: "POST",
+          body: JSON.stringify({ older_than_days: 30, statuses: ["succeeded", "failed", "cancelled", "needs_review"] }),
+        });
+        notify({ tone: "success", title: copy.oldRunsDeleted(result.deleted) });
+        setConfirmOld(false);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function actions(item: Run) {
+    return (
+      <span className="row">
+        {(item.status === "running" || item.status === "pending") && (
+          <ActionButton className="btn-ghost" busy={pending(`cancel:${item.id}`)} onClick={() => cancel(item)}>{copy.cancel}</ActionButton>
+        )}
+        <ActionButton className="btn-ghost" busy={pending(`rerun:${item.id}`)} onClick={() => rerun(item)}>Rerun</ActionButton>
+        <button className="btn-danger" type="button" onClick={() => setPendingDelete(item)}>{copy.delete}</button>
+      </span>
+    );
   }
 
   const columns: ColumnDef<Run>[] = [
@@ -51,19 +118,7 @@ export function Runs() {
     { accessorKey: "trigger", header: "Trigger" },
     { accessorKey: "spec_version", header: "Version" },
     { accessorKey: "created_at", header: "When", cell: ({ getValue }) => formatWhen(String(getValue())) },
-    {
-      id: "actions",
-      header: "",
-      cell: ({ row }) => (
-        <span className="row">
-          {(row.original.status === "running" || row.original.status === "pending") && (
-            <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${row.original.id}/cancel`, "POST", "Cancelled")}>Cancel</button>
-          )}
-          <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${row.original.id}/rerun`, "POST", "Rerun requested")}>Rerun</button>
-          <button className="btn-danger" type="button" onClick={() => void call(`/api/runs/${row.original.id}`, "DELETE", "Run deleted")}>Delete</button>
-        </span>
-      ),
-    },
+    { id: "actions", header: "", cell: ({ row }) => actions(row.original) },
   ];
 
   if (error) return <div className="card">{error}</div>;
@@ -78,19 +133,15 @@ export function Runs() {
         </div>
         <div className="row">
           <ViewToggle value={view} onChange={setView} options={[{ id: "board", label: "Board" }, { id: "table", label: "Table" }]} />
-          <button className="btn-danger" type="button" onClick={() => setConfirm(true)}>Delete old runs</button>
+          <button className="btn-danger" type="button" onClick={() => setConfirmOld(true)}>Delete old runs</button>
         </div>
       </div>
       <section className="card">
         <div className="row">
           <input className="search" aria-label="Search by agent name" value={q} placeholder="Agent name" onChange={(event) => setQ(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") load(status, event.currentTarget.value); }} />
-          <div className="pills" role="group" aria-label="Status">
-            {STATUSES.map((item) => (
-              <button key={item || "all"} type="button" className={status === item ? "on" : ""} aria-pressed={status === item} onClick={() => setStatus(item)}>{item ? statusLabel(item) : "All"}</button>
-            ))}
-          </div>
+          <Select className="compact" ariaLabel={copy.status} value={status} onChange={setStatus} options={STATUS_OPTIONS.map((option) => ({ ...option, label: option.value ? statusLabel(option.value) : copy.all }))} />
         </div>
-        {rows.length === 0 ? <Empty title="No runs" body="Run an agent to see it here." /> : view === "table" ? <DataTable data={rows} columns={columns} /> : (
+        {rows.length === 0 ? <Empty title="No runs" body="Run an agent to see it here." action={<Link className="btn" to="/agents">{copy.openAgents}</Link>} /> : view === "table" ? <DataTable data={rows} columns={columns} /> : (
           <div className="board">
             {BOARD.filter((column) => !status || column.statuses.includes(status)).map((column) => {
               const items = rows.filter((row) => column.statuses.includes(row.status));
@@ -98,20 +149,14 @@ export function Runs() {
                 <section className={`board-col ${column.tone}`} key={column.key}>
                   <h2>{column.title} · {items.length}</h2>
                   {items.length === 0 && <p className="lede">None</p>}
-                  {items.map((run) => (
-                    <article className="board-card" key={run.id}>
+                  {items.map((item) => (
+                    <article className="board-card" key={item.id}>
                       <div className="row" style={{ justifyContent: "space-between" }}>
-                        <Link to={`/runs/${run.id}`}>{run.agent_name}</Link>
-                        <Badge status={run.status} />
+                        <Link to={`/runs/${item.id}`}>{item.agent_name}</Link>
+                        <Badge status={item.status} />
                       </div>
-                      <p>{run.trigger} · v{run.spec_version} · {formatWhen(run.created_at)}</p>
-                      <span className="row">
-                        {(run.status === "running" || run.status === "pending") && (
-                          <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${run.id}/cancel`, "POST", "Cancelled")}>Cancel</button>
-                        )}
-                        <button className="btn-ghost" type="button" onClick={() => void call(`/api/runs/${run.id}/rerun`, "POST", "Rerun requested")}>Rerun</button>
-                        <button className="btn-danger" type="button" onClick={() => void call(`/api/runs/${run.id}`, "DELETE", "Run deleted")}>Delete</button>
-                      </span>
+                      <p>{item.trigger} · v{item.spec_version} · {formatWhen(item.created_at)}</p>
+                      {actions(item)}
                     </article>
                   ))}
                 </section>
@@ -120,16 +165,24 @@ export function Runs() {
           </div>
         )}
       </section>
-      {confirm && (
-        <Modal title="Delete old runs" onClose={() => setConfirm(false)}>
-          <p>Finished runs older than 30 days, and their artifacts, are deleted. A running run is left alone.</p>
-          <div className="row">
-            <button className="btn-danger" type="button" onClick={() => { setConfirm(false); void api("/api/runs/bulk-delete", { method: "POST", body: JSON.stringify({ older_than_days: 30, statuses: ["succeeded", "failed", "cancelled", "needs_review"] }) }).then(() => { setToast("Old runs deleted"); load(); }).catch((exc: ApiError) => setToast(exc.message)); }}>Delete</button>
-            <button className="btn-ghost" type="button" onClick={() => setConfirm(false)}>Cancel</button>
-          </div>
-        </Modal>
+      {confirmOld && (
+        <ConfirmDialog
+          title="Delete old runs"
+          body={copy.confirmDeleteOld}
+          busy={pending("bulk")}
+          onConfirm={removeOld}
+          onClose={() => setConfirmOld(false)}
+        />
       )}
-      <Toast message={toast} />
+      {pendingDelete && (
+        <ConfirmDialog
+          title={copy.confirmDeleteTitle}
+          body={copy.confirmDeleteRun}
+          busy={pending(`delete:${pendingDelete.id}`)}
+          onConfirm={() => remove(pendingDelete)}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </>
   );
 }

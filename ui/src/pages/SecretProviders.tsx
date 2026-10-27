@@ -1,7 +1,11 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
-import { DataTable, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
+import { Select } from "../components/Select";
+import { ActionButton, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
+import { copy } from "../lib/copy";
+import { announceError, notify } from "../lib/notify";
 
 type Provider = {
   id: string;
@@ -43,7 +47,8 @@ export function SecretProviders() {
   const [error, setError] = useState("");
   const [form, setForm] = useState<typeof EMPTY | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [toast, setToast] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Provider | null>(null);
+  const { run, pending } = useBusy();
 
   function load() {
     api<Provider[]>("/api/secret-providers").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -72,20 +77,38 @@ export function SecretProviders() {
       else await api("/api/secret-providers", { method: "POST", body: JSON.stringify(payload) });
       setForm(null);
       setEditing(null);
-      setToast("Saved");
+      notify({ tone: "success", title: copy.saved });
       load();
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "Could not save");
+      announceError(exc, copy.couldNotSave);
     }
   }
 
-  async function test(id: string) {
-    try {
-      const result = await api<{ ok: boolean; checked: string }>(`/api/secret-providers/${id}/test`, { method: "POST", body: "{}" });
-      setToast(result.ok ? `Provider responded (${result.checked})` : "The provider did not respond");
-    } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "The provider is unreachable");
-    }
+  function test(id: string) {
+    void run(`test:${id}`, async () => {
+      try {
+        const result = await api<{ ok: boolean; checked: string }>(`/api/secret-providers/${id}/test`, { method: "POST", body: "{}" });
+        notify({
+          tone: result.ok ? "success" : "warning",
+          title: result.ok ? copy.providerResponded(result.checked) : copy.providerSilent,
+        });
+      } catch (exc) {
+        announceError(exc, copy.providerUnreachable);
+      }
+    });
+  }
+
+  function remove(row: Provider) {
+    void run(`delete:${row.id}`, async () => {
+      try {
+        await api(`/api/secret-providers/${row.id}`, { method: "DELETE" });
+        notify({ tone: "success", title: copy.deletedSource(row.name) });
+        setPendingDelete(null);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
   }
 
   const columns: ColumnDef<Provider>[] = [
@@ -100,9 +123,9 @@ export function SecretProviders() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Test</button>
-          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>Edit</button>
-          <button className="btn-danger" type="button" onClick={() => void api(`/api/secret-providers/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Deleted"); load(); }).catch((exc: ApiError) => setToast(exc.message))}>Delete</button>
+          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
+          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>{copy.edit}</button>
+          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
         </span>
       ),
     },
@@ -142,36 +165,42 @@ export function SecretProviders() {
         <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>
       </div>
       <section className="card">
-        {rows.length === 0 ? <Empty title="No sources" body="Add a Conjur or CCP record. The OpenBao/Vault kind is reserved and does not read secrets yet." /> : <DataTable data={rows} columns={columns} />}
+        {rows.length === 0 ? <Empty title="No sources" body="Add a Conjur or CCP record. The OpenBao/Vault kind is reserved and does not read secrets yet." action={<button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>} /> : <DataTable data={rows} columns={columns} />}
       </section>
       {form && (
         <Modal title={editing ? "Edit source" : "New secret source"} onClose={() => setForm(null)}>
           <div className="grid-2">
             <label className="field">Name<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
             <label className="field">Kind
-              <select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value, auth_method: event.target.value === "ccp" ? "mtls" : event.target.value === "conjur" ? "api-key" : "token" })}>
-                <option value="conjur">CyberArk Conjur</option>
-                <option value="ccp">CyberArk CCP</option>
-                <option value="vault">OpenBao / Vault (not connected)</option>
-              </select>
+              <Select
+                ariaLabel="Kind"
+                value={form.kind}
+                onChange={(kind) => setForm({ ...form, kind, auth_method: kind === "ccp" ? "mtls" : kind === "conjur" ? "api-key" : "token" })}
+                options={[
+                  { value: "conjur", label: "CyberArk Conjur", description: "Variable path" },
+                  { value: "ccp", label: "CyberArk CCP", description: "Safe and object" },
+                  { value: "vault", label: "OpenBao / Vault", description: "Reserved; does not read secrets yet" },
+                ]}
+              />
             </label>
             <label className="field" style={{ gridColumn: "1 / -1" }}>Address<input value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} /></label>
             <label className="field">Auth method
-              <select value={form.auth_method} onChange={(event) => setForm({ ...form, auth_method: event.target.value })}>
-                {form.kind === "ccp" ? (
-                  <>
-                    <option value="mtls">Client certificate (mTLS)</option>
-                    <option value="allowed-machines">Allowed machines</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="api-key">API key</option>
-                    <option value="authn-k8s">authn-k8s (service account)</option>
-                    <option value="authn-jwt">authn-jwt (service account)</option>
-                    <option value="token">token</option>
-                  </>
-                )}
-              </select>
+              <Select
+                ariaLabel="Auth method"
+                value={form.auth_method}
+                onChange={(auth_method) => setForm({ ...form, auth_method })}
+                options={form.kind === "ccp"
+                  ? [
+                    { value: "mtls", label: "Client certificate (mTLS)", description: "Certificate from the provider Secret" },
+                    { value: "allowed-machines", label: "Allowed machines" },
+                  ]
+                  : [
+                    { value: "api-key", label: "API key", description: "Proof-of-concept path" },
+                    { value: "authn-k8s", label: "authn-k8s", description: "Service account" },
+                    { value: "authn-jwt", label: "authn-jwt", description: "Service account" },
+                    { value: "token", label: "token" },
+                  ]}
+              />
             </label>
             <label className="field">Account<input value={form.account} placeholder="Conjur account" onChange={(event) => setForm({ ...form, account: event.target.value })} /></label>
             <label className="field">Host login<input autoComplete="off" placeholder="host/agent-runtime/control" value={form.login} onChange={(event) => setForm({ ...form, login: event.target.value })} /></label>
@@ -188,12 +217,20 @@ export function SecretProviders() {
           </div>
           <p>API keys and client certificates are not entered on this form. The control plane reads the Secret from its own namespace. authn-k8s and authn-jwt are used when the service-account token file is mounted. The proof-of-concept path is an API key. An OpenBao/Vault record does not return a secret.</p>
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="button" onClick={() => void save()}>Save</button>
-            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Cancel</button>
+            <ActionButton busy={pending("save")} onClick={() => void run("save", save)}>{copy.save}</ActionButton>
+            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>{copy.cancel}</button>
           </div>
         </Modal>
       )}
-      <Toast message={toast} />
+      {pendingDelete && (
+        <ConfirmDialog
+          title={copy.confirmDeleteTitle}
+          body={copy.confirmDeleteSecret(pendingDelete.name)}
+          busy={pending(`delete:${pendingDelete.id}`)}
+          onConfirm={() => remove(pendingDelete)}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </>
   );
 }

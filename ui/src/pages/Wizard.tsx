@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Select } from "../components/Select";
 import { api, ApiError } from "../lib/api";
+import { copy } from "../lib/copy";
+import { notify } from "../lib/notify";
 
 type Source = { id: string; name: string; dialect: string };
 type Model = { id: string; name: string; model: string; is_default: boolean };
@@ -56,7 +59,9 @@ export function Wizard() {
       setSpecText(JSON.stringify(draft.spec, null, 2));
       setStep(2);
     } catch (exc) {
-      setError(draftError(exc));
+      const message = draftError(exc);
+      setError(message);
+      notify({ tone: "error", title: message });
     } finally {
       setBusy(false);
     }
@@ -88,9 +93,17 @@ export function Wizard() {
     setBusy(true);
     try {
       const created = await api<{ id: string }>("/api/agents", { method: "POST", body: JSON.stringify({ spec: body, publish: true }) });
+      const name = String((body.metadata as { name?: string } | undefined)?.name || "agent");
+      notify({
+        tone: "success",
+        title: copy.publishedAgent(name),
+        actions: [{ label: copy.openAgent, href: `/agents/${created.id}` }],
+      });
       navigate(`/agents/${created.id}`);
     } catch (exc) {
-      setError(exc instanceof ApiError ? exc.message : "Could not publish");
+      const message = exc instanceof ApiError ? exc.message : "Could not publish";
+      setError(message);
+      notify({ tone: "error", title: message });
     } finally {
       setBusy(false);
     }
@@ -121,15 +134,24 @@ export function Wizard() {
         {step === 1 && (
           <div className="grid-2">
             <label className="field">Data source
-              <select value={sourceId} onChange={(event) => setSourceId(event.target.value)}>
-                {sources.map((source) => <option key={source.id} value={source.id}>{source.name} · {source.dialect}</option>)}
-              </select>
+              <Select
+                ariaLabel="Data source"
+                value={sourceId}
+                onChange={setSourceId}
+                placeholder="Select a source"
+                options={sources.map((source) => ({ value: source.id, label: source.name, description: source.dialect }))}
+              />
             </label>
             <label className="field">Model
-              <select value={modelRef} onChange={(event) => setModelRef(event.target.value)}>
-                <option value="">Environment default</option>
-                {models.map((model) => <option key={model.id} value={model.name}>{model.name} · {model.model}</option>)}
-              </select>
+              <Select
+                ariaLabel="Model"
+                value={modelRef}
+                onChange={setModelRef}
+                options={[
+                  { value: "", label: "Environment default", description: "The seeded model" },
+                  ...models.map((model) => ({ value: model.name, label: model.name, description: model.model })),
+                ]}
+              />
             </label>
             {sources.length === 0 && <p>Define a data source first.</p>}
           </div>
@@ -143,12 +165,17 @@ export function Wizard() {
           <div>
             <div className="grid-2">
               <label className="field">Mode
-                <select value={schedule?.mode || "manual"} onChange={(event) => updateSchedule(event.target.value, schedule?.cron || "30 8 * * 1-5")}>
-                  <option value="manual">Manual</option>
-                  <option value="cron">Scheduled</option>
-                  <option value="hybrid">Scheduled, plus its own decision</option>
-                  <option value="self">Its own decision</option>
-                </select>
+                <Select
+                  ariaLabel="Schedule mode"
+                  value={schedule?.mode || "manual"}
+                  onChange={(mode) => updateSchedule(mode, schedule?.cron || "30 8 * * 1-5")}
+                  options={[
+                    { value: "manual", label: "Manual", description: "Only when someone clicks Run" },
+                    { value: "cron", label: "Scheduled", description: "A cron expression" },
+                    { value: "hybrid", label: "Scheduled, plus its own decision", description: "Cron, and the agent may ask to run" },
+                    { value: "self", label: "Its own decision", description: "No clock; the agent decides" },
+                  ]}
+                />
               </label>
               <label className="field">Cron<input value={schedule?.cron || ""} onChange={(event) => updateSchedule(schedule?.mode || "cron", event.target.value)} /></label>
             </div>
@@ -168,10 +195,10 @@ export function Wizard() {
         <div className="row" style={{ marginTop: 16 }}>
           {step > 0 && <button className="btn-ghost" type="button" onClick={() => setStep(step - 1)}>Back</button>}
           {step === 0 && <button className="btn" type="button" onClick={() => setStep(1)}>Continue</button>}
-          {step === 1 && <button className="btn" type="button" disabled={busy || !sourceId} onClick={() => void generate()}>{busy ? "Drafting…" : "Draft spec"}</button>}
+          {step === 1 && <button className="btn" type="button" disabled={busy || !sourceId} aria-busy={busy || undefined} onClick={() => void generate()}>{busy && <span className="spinner" aria-hidden />}{busy ? "Drafting…" : "Draft spec"}</button>}
           {step === 2 && <button className="btn" type="button" onClick={() => setStep(3)}>Schedule</button>}
           {step === 3 && <button className="btn" type="button" onClick={() => setStep(4)}>Review</button>}
-          {step === 4 && <button className="btn" type="button" disabled={busy} onClick={() => void publish()}>{busy ? "Publishing…" : "Publish"}</button>}
+          {step === 4 && <button className="btn" type="button" disabled={busy} aria-busy={busy || undefined} onClick={() => void publish()}>{busy && <span className="spinner" aria-hidden />}{busy ? "Publishing…" : "Publish"}</button>}
         </div>
       </section>
     </>

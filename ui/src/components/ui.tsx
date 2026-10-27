@@ -185,7 +185,54 @@ export function Markdown({ text }: { text: string }) {
   );
 }
 
-export function Toast({ message }: { message: string }) {
-  if (!message) return null;
-  return <div className="toasts" role="status"><div className="toast">{message}</div></div>;
+export function ActionButton({
+  busy = false,
+  className = "btn",
+  children,
+  onClick,
+  disabled = false,
+  busyLabel = copy.working,
+}: {
+  busy?: boolean;
+  className?: string;
+  children: ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  busyLabel?: string;
+}) {
+  return (
+    <button className={className} type="button" disabled={disabled || busy} aria-busy={busy || undefined} onClick={onClick}>
+      {busy && <span className="spinner" aria-hidden />}
+      {busy ? busyLabel : children}
+    </button>
+  );
+}
+
+export function ConfirmDialog({
+  title,
+  body,
+  note = copy.noUndo,
+  confirmLabel = copy.delete,
+  busy = false,
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  body: string;
+  note?: string;
+  confirmLabel?: string;
+  busy?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title={title} onClose={busy ? () => undefined : onClose}>
+      <p>{body}</p>
+      {note && <p className="lede">{note}</p>}
+      <div className="row">
+        <ActionButton className="btn-danger" busy={busy} onClick={onConfirm}>{confirmLabel}</ActionButton>
+        <button className="btn-ghost" type="button" onClick={onClose} disabled={busy}>{copy.cancel}</button>
+      </div>
+    </Modal>
+  );
 }

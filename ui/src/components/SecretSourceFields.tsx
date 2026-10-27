@@ -1,3 +1,5 @@
+import { Select } from "./Select";
+
 type Provider = { id: string; name: string; kind: string; enabled: boolean };
 
 export type SecretSource = {
@@ -75,22 +77,25 @@ export function SecretSourceFields({
   return (
     <>
       <label className="field">Secret backend
-        <select
+        <Select
+          ariaLabel="Secret backend"
           value={value.secret_backend}
-          onChange={(event) => onChange({ ...value, secret_backend: event.target.value })}
-        >
-          {BACKENDS.map((item) => (
-            <option key={item.id} value={item.id}>{item.label}</option>
-          ))}
-        </select>
+          onChange={(secret_backend) => onChange({ ...value, secret_backend })}
+          options={BACKENDS.map((item) => ({ value: item.id, label: item.label }))}
+        />
       </label>
       {showSecretForm && value.secret_backend !== "db" && (
         <>
           <label className="field">What the reference holds
-            <select value={value.secret_form || "password"} onChange={(event) => onChange({ ...value, secret_form: event.target.value })}>
-              <option value="password">Password</option>
-              <option value="url">Full connection URL</option>
-            </select>
+            <Select
+              ariaLabel="What the reference holds"
+              value={value.secret_form || "password"}
+              onChange={(secret_form) => onChange({ ...value, secret_form })}
+              options={[
+                { value: "password", label: "Password", description: "Host and user stay on this form" },
+                { value: "url", label: "Full connection URL", description: "The secret is the whole address" },
+              ]}
+            />
           </label>
           <p className="field" style={{ gridColumn: "1 / -1" }}>
             {value.secret_form === "url"
@@ -113,10 +118,12 @@ export function SecretSourceFields({
       {value.secret_backend === "conjur" && (
         <>
           <label className="field">Conjur source
-            <select value={value.secret_provider_id} onChange={(event) => onChange({ ...value, secret_provider_id: event.target.value })}>
-              <option value="">Select</option>
-              {choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            <Select
+              ariaLabel="Conjur source"
+              value={value.secret_provider_id}
+              onChange={(secret_provider_id) => onChange({ ...value, secret_provider_id })}
+              options={[{ value: "", label: "Select" }, ...choices.map((item) => ({ value: item.id, label: item.name }))]}
+            />
           </label>
           <label className="field">Variable path
             <input autoComplete="off" placeholder="agent-runtime/postgres-sales/password" value={value.secret_path} onChange={(event) => onChange({ ...value, secret_path: event.target.value })} />
@@ -127,10 +134,12 @@ export function SecretSourceFields({
       {value.secret_backend === "ccp" && (
         <>
           <label className="field">CCP source
-            <select value={value.secret_provider_id} onChange={(event) => onChange({ ...value, secret_provider_id: event.target.value })}>
-              <option value="">Select</option>
-              {choices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
+            <Select
+              ariaLabel="CCP source"
+              value={value.secret_provider_id}
+              onChange={(secret_provider_id) => onChange({ ...value, secret_provider_id })}
+              options={[{ value: "", label: "Select" }, ...choices.map((item) => ({ value: item.id, label: item.name }))]}
+            />
           </label>
           <label className="field">AppID
             <input autoComplete="off" value={value.ccp_app_id} onChange={(event) => onChange({ ...value, ccp_app_id: event.target.value })} />

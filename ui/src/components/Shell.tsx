@@ -1,6 +1,7 @@
 import { Bot, Database, KeyRound, LayoutDashboard, Moon, Play, Search, Settings, Sparkles, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { Toaster } from "./Toaster";
 import { api } from "../lib/api";
 import { copy } from "../lib/copy";
 
@@ -100,6 +101,7 @@ export function Shell() {
         </main>
       </div>
       {palette && <CommandPalette onClose={() => setPalette(false)} onPick={(path) => { setPalette(false); navigate(path); }} onTheme={toggleTheme} dark={dark} />}
+      <Toaster />
     </div>
   );
 }

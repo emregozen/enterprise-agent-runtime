@@ -1,8 +1,12 @@
 import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
+import { Select } from "../components/Select";
 import { EMPTY_SECRET_SOURCE, SecretSourceFields, secretSourceFromRow, type SecretSource } from "../components/SecretSourceFields";
-import { DataTable, Empty, Modal, SkeletonRows, Toast } from "../components/ui";
+import { ActionButton, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
+import { copy } from "../lib/copy";
+import { announceError, notify } from "../lib/notify";
 
 type Source = {
   id: string;
@@ -51,9 +55,10 @@ export function DataSources() {
   const [error, setError] = useState("");
   const [form, setForm] = useState<typeof EMPTY | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [toast, setToast] = useState("");
   const [q, setQ] = useState("");
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [pendingDelete, setPendingDelete] = useState<Source | null>(null);
+  const { run, pending } = useBusy();
 
   function load() {
     api<Source[]>("/api/datasources").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -91,20 +96,38 @@ export function DataSources() {
       else await api("/api/datasources", { method: "POST", body: JSON.stringify(payload) });
       setForm(null);
       setEditing(null);
-      setToast("Saved");
+      notify({ tone: "success", title: copy.saved });
       load();
     } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "Could not save");
+      announceError(exc, copy.couldNotSave);
     }
   }
 
-  async function test(id: string) {
-    try {
-      const result = await api<{ ok: boolean; latency_ms: number }>(`/api/datasources/${id}/test`, { method: "POST" });
-      setToast(result.ok ? `Connected in ${result.latency_ms} ms` : "Connection failed");
-    } catch (exc) {
-      setToast(exc instanceof ApiError ? exc.message : "Connection failed");
-    }
+  function test(id: string) {
+    void run(`test:${id}`, async () => {
+      try {
+        const result = await api<{ ok: boolean; latency_ms: number }>(`/api/datasources/${id}/test`, { method: "POST" });
+        notify({
+          tone: result.ok ? "success" : "error",
+          title: result.ok ? copy.connectedIn(result.latency_ms) : copy.connectionFailed,
+        });
+      } catch (exc) {
+        announceError(exc, copy.connectionFailed);
+      }
+    });
+  }
+
+  function remove(row: Source) {
+    void run(`delete:${row.id}`, async () => {
+      try {
+        await api(`/api/datasources/${row.id}`, { method: "DELETE" });
+        notify({ tone: "success", title: copy.deletedSource(row.name) });
+        setPendingDelete(null);
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
   }
 
   const columns: ColumnDef<Source>[] = [
@@ -120,9 +143,9 @@ export function DataSources() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <button className="btn-ghost" type="button" onClick={() => void test(row.original.id)}>Test</button>
-          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, ...row.original, ...secretSourceFromRow(row.original), allow_tables: row.original.allow_tables.join(", "), password: "" }); }}>Edit</button>
-          <button className="btn-danger" type="button" onClick={() => void api(`/api/datasources/${row.original.id}`, { method: "DELETE" }).then(() => { setToast("Deleted"); load(); })}>Delete</button>
+          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
+          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, ...row.original, ...secretSourceFromRow(row.original), allow_tables: row.original.allow_tables.join(", "), password: "" }); }}>{copy.edit}</button>
+          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
         </span>
       ),
     },
@@ -143,17 +166,22 @@ export function DataSources() {
       </div>
       <section className="card">
         <input className="search" aria-label="Search sources" value={q} placeholder="Name" onChange={(event) => setQ(event.target.value)} />
-        {filtered.length === 0 ? <Empty title="No sources" body="Add a Postgres or Oracle connection." /> : <DataTable data={filtered} columns={columns} />}
+        {filtered.length === 0 ? <Empty title={rows.length === 0 ? "No sources" : copy.noMatches} body={rows.length === 0 ? "Add a Postgres or Oracle connection." : "Try another name."} action={rows.length === 0 ? <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button> : undefined} /> : <DataTable data={filtered} columns={columns} />}
       </section>
       {form && (
         <Modal title={editing ? "Edit source" : "New source"} onClose={() => setForm(null)}>
           <div className="grid-2">
             <label className="field">Name<input value={form.name} disabled={Boolean(editing)} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
             <label className="field">Type
-              <select value={form.dialect} onChange={(event) => setForm({ ...form, dialect: event.target.value, port: event.target.value === "oracle" ? 1521 : 5432 })}>
-                <option value="postgres">Postgres</option>
-                <option value="oracle">Oracle</option>
-              </select>
+              <Select
+                ariaLabel="Type"
+                value={form.dialect}
+                onChange={(dialect) => setForm({ ...form, dialect, port: dialect === "oracle" ? 1521 : 5432 })}
+                options={[
+                  { value: "postgres", label: "Postgres", description: "Default port 5432" },
+                  { value: "oracle", label: "Oracle", description: "Default port 1521" },
+                ]}
+              />
             </label>
             <label className="field">Host<input value={form.host} onChange={(event) => setForm({ ...form, host: event.target.value })} /></label>
             <label className="field">Port<input type="number" value={form.port} onChange={(event) => setForm({ ...form, port: Number(event.target.value) })} /></label>
@@ -171,21 +199,34 @@ export function DataSources() {
             )}
             <label className="field">Tables<input value={form.allow_tables} onChange={(event) => setForm({ ...form, allow_tables: event.target.value })} /></label>
             <label className="field">Sensitivity
-              <select value={form.sensitivity} onChange={(event) => setForm({ ...form, sensitivity: event.target.value })}>
-                <option value="internal">internal</option>
-                <option value="restricted">restricted</option>
-              </select>
+              <Select
+                ariaLabel="Sensitivity"
+                value={form.sensitivity}
+                onChange={(sensitivity) => setForm({ ...form, sensitivity })}
+                options={[
+                  { value: "internal", label: "internal", description: "Usual business data" },
+                  { value: "restricted", label: "restricted", description: "Tighter handling" },
+                ]}
+              />
             </label>
             <label className="field">Description<input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} /></label>
             <label className="field"><span>Read only</span><input type="checkbox" checked={form.read_only} onChange={(event) => setForm({ ...form, read_only: event.target.checked })} /></label>
           </div>
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="button" onClick={() => void save()}>Save</button>
-            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>Cancel</button>
+            <ActionButton busy={pending("save")} onClick={() => void run("save", save)}>{copy.save}</ActionButton>
+            <button className="btn-ghost" type="button" onClick={() => setForm(null)}>{copy.cancel}</button>
           </div>
         </Modal>
       )}
-      <Toast message={toast} />
+      {pendingDelete && (
+        <ConfirmDialog
+          title={copy.confirmDeleteTitle}
+          body={copy.confirmDeleteSource(pendingDelete.name)}
+          busy={pending(`delete:${pendingDelete.id}`)}
+          onConfirm={() => remove(pendingDelete)}
+          onClose={() => setPendingDelete(null)}
+        />
+      )}
     </>
   );
 }
