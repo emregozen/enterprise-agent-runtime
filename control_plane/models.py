@@ -212,6 +212,50 @@ class AuditEvent(Base):
     detail: Mapped[dict] = mapped_column(JSONB)
 
 
+class DeliveryChannel(Base):
+    """SMTP or HTTP delivery. The credential is a secret reference, never returned by the API."""
+
+    __tablename__ = "delivery_channels"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    from_address: Mapped[str] = mapped_column(String(320), default="")
+    from_name: Mapped[str] = mapped_column(String(120), default="")
+    allow_domains: Mapped[list] = mapped_column(JSONB, default=list)
+    max_attachment_bytes: Mapped[int] = mapped_column(Integer, default=2_000_000)
+    secret_backend: Mapped[str] = mapped_column(String(32), default="db")
+    secret_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("secret_providers.id"), nullable=True
+    )
+    secret_path: Mapped[str] = mapped_column(Text, default="")
+    secret_ref: Mapped[dict] = mapped_column(JSONB, default=dict)
+    k8s_secret_name: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    k8s_secret_key: Mapped[str | None] = mapped_column(String(253), nullable=True)
+    credential_ciphertext: Mapped[str] = mapped_column(Text, default="")
+    credential_hint: Mapped[str] = mapped_column(String(16), default="")
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DeliveryLog(Base):
+    __tablename__ = "delivery_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("delivery_channels.id", ondelete="SET NULL"), nullable=True
+    )
+    channel_name: Mapped[str] = mapped_column(String(63), default="")
+    recipients: Mapped[dict] = mapped_column(JSONB, default=dict)
+    subject: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(16), default="failed")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class Artifact(Base):
     __tablename__ = "artifacts"
 

@@ -50,7 +50,7 @@ def db() -> Session:
     session = SessionLocal()
     session.execute(
         text(
-            "TRUNCATE audit_events, artifacts, tool_calls, run_steps, llm_calls, runs, schedules, "
+            "TRUNCATE delivery_logs, delivery_channels, audit_events, artifacts, tool_calls, run_steps, llm_calls, runs, schedules, "
             "agent_versions, agents, llm_providers, datasources, secret_providers RESTART IDENTITY CASCADE"
         )
     )

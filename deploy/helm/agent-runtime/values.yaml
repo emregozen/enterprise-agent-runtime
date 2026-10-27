@@ -119,6 +119,24 @@ otel:
   endpoint: ""
   serviceName: agent-runtime
 
+# Optional SMTP catcher for CRC. Off by default. The control plane sends; run pods do not.
+# Enable with mailpit.enabled and, to open the inbox, mailpit.route.enabled.
+mailpit:
+  enabled: false
+  image: docker.io/axllent/mailpit:v1.21.8
+  smtpPort: 1025
+  uiPort: 8025
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  route:
+    enabled: false
+    host: ""
+
 # Extra egress for run pods. In-cluster DNS, control plane and Postgres are always allowed.
 # Add the LLM gateway and external databases as ipBlocks. Leave empty until those addresses are known.
 networkPolicy:

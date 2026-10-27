@@ -15,6 +15,10 @@ describe("presentText", () => {
       "plan doğrulanamadı",
       "satır sayısı çapraz kontrolü tutmadı",
       "SQL çapraz kontrolü tutmadı: row_count",
+      "teslimat kanalı yok veya kapalı",
+      "alıcı izin verilen etki alanında değil",
+      "teslimat gönderilemedi: HTTP 500",
+      "teslimat tamamlanamadı",
     ];
     for (const sample of samples) {
       const shown = presentText(sample);

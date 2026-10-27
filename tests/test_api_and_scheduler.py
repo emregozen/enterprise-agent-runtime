@@ -53,6 +53,8 @@ def test_builder_and_run_registry(datasource):
         spec = draft.json()["spec"]
         assert spec["spec"]["schedule"]["mode"] in {"cron", "hybrid"}
         assert "send_email" in spec["spec"]["tools"]
+        assert spec["spec"]["delivery"][0]["to"] == []
+        spec["spec"]["delivery"] = []
         created = client.post("/api/agents", json={"spec": spec, "publish": True})
         assert created.status_code == 201, created.text
         agent_id = created.json()["id"]

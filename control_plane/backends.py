@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import subprocess
@@ -17,6 +18,21 @@ from shared.config import get_settings
 
 _lock = threading.Lock()
 _backend: "RunBackend | None" = None
+_log = logging.getLogger("control-plane")
+
+
+def _deliver_quiet(db, runs: list[Run]) -> None:
+    """Delivery stays in the control plane. A send error does not change the run."""
+    if not runs:
+        return
+    from delivery.send import deliver_run
+
+    for run in runs:
+        try:
+            deliver_run(db, run)
+        except Exception:
+            _log.warning("delivery hook failed for run %s", run.id)
+            db.rollback()
 
 
 class RunBackend:
@@ -156,6 +172,7 @@ class LocalBackend(RunBackend):
         db = SessionLocal()
         try:
             finished = []
+            touched: list[Run] = []
             for run_id, proc in list(self.procs.items()):
                 code = proc.harness.poll()
                 if code is None:
@@ -173,8 +190,10 @@ class LocalBackend(RunBackend):
                     run.error = f"harness çıktı kodu {code}; tamamlanma raporu yazılmadı"
                     run.finished_at = utcnow()
                     audit(db, "controller", "run.completed", "run", str(run.id), {"status": "failed", "exit": code})
+                    touched.append(run)
                 finished.append(run_id)
             db.commit()
+            _deliver_quiet(db, touched)
             for run_id in finished:
                 self.procs.pop(run_id, None)
         finally:
@@ -274,6 +293,7 @@ class KubernetesBackend(RunBackend):
         db = SessionLocal()
         try:
             jobs = self.batch.list_namespaced_job(self.namespace, label_selector="app=agent-run")
+            touched: list[Run] = []
             for job in jobs.items:
                 annotations = job.metadata.annotations or {}
                 run_id = annotations.get("agent.internal/run-id")
@@ -290,12 +310,15 @@ class KubernetesBackend(RunBackend):
                     run.error = "Kubernetes Job başarısız oldu (backoffLimit=0)"
                     run.finished_at = utcnow()
                     audit(db, "controller", "run.completed", "run", str(run.id), {"status": "failed"})
+                    touched.append(run)
                 elif succeeded and not run.report_markdown and run.summary is None:
                     run.status = "needs_review"
                     run.needs_review_reason = "Job bitti ama harness rapor yazmadı"
                     run.finished_at = utcnow()
                     audit(db, "controller", "run.needs_review", "run", str(run.id), {})
+                    touched.append(run)
             db.commit()
+            _deliver_quiet(db, touched)
         finally:
             db.close()
 

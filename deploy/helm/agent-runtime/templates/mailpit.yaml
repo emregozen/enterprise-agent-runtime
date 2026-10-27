@@ -1,0 +1,137 @@
+{{- if .Values.mailpit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mailpit
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+      {{- include "agent-runtime.podAnnotations" (dict "root" . "container" "mailpit" "image" .Values.mailpit.image) | nindent 6 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mailpit
+          image: {{ .Values.mailpit.image | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args:
+            - --smtp
+            - 0.0.0.0:{{ .Values.mailpit.smtpPort }}
+            - --listen
+            - 0.0.0.0:{{ .Values.mailpit.uiPort }}
+            - --database
+            - /data/mailpit.db
+          ports:
+            - name: smtp
+              containerPort: {{ .Values.mailpit.smtpPort }}
+            - name: http
+              containerPort: {{ .Values.mailpit.uiPort }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: MP_DATABASE
+              value: /data/mailpit.db
+            - name: MP_SMTP_BIND_ADDR
+              value: 0.0.0.0:{{ .Values.mailpit.smtpPort }}
+            - name: MP_UI_BIND_ADDR
+              value: 0.0.0.0:{{ .Values.mailpit.uiPort }}
+          securityContext:
+            {{- include "agent-runtime.containerSecurity" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: {{ .Values.mailpit.resources.requests.cpu | quote }}
+              memory: {{ .Values.mailpit.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.mailpit.resources.limits.cpu | quote }}
+              memory: {{ .Values.mailpit.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mailpit
+spec:
+  selector:
+    app: mailpit
+  ports:
+    - name: smtp
+      port: {{ .Values.mailpit.smtpPort }}
+      targetPort: smtp
+    - name: http
+      port: {{ .Values.mailpit.uiPort }}
+      targetPort: http
+{{- if .Values.mailpit.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mailpit
+  namespace: {{ .Values.namespace }}
+spec:
+  {{- if .Values.mailpit.route.host }}
+  host: {{ .Values.mailpit.route.host | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: mailpit
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mailpit
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: mailpit
+  policyTypes: ["Ingress"]
+  ingress:
+    # SMTP only from the control plane. Run pods have no path here.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: control-plane
+      ports:
+        - protocol: TCP
+          port: {{ .Values.mailpit.smtpPort }}
+    # The web UI is what the Route serves. Leave it reachable in the cluster.
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.mailpit.uiPort }}
+{{- end }}
+{{- end }}

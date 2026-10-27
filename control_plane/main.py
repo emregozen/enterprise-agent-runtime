@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from control_plane.db import init_db
+from control_plane.delivery_routes import delivery
 from control_plane.routes import internal, public
 from control_plane.scheduler import tick
 from control_plane.seed import seed
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(public)
+    app.include_router(delivery)
     app.include_router(internal)
 
     @app.exception_handler(ServiceError)

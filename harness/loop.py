@@ -54,6 +54,7 @@ Return one JSON object matching apiVersion agents.internal/v1 kind AgentSpec.
 Use only the datasources listed in the user payload. Do not invent table names.
 model.class must be local-default when any datasource sensitivity is restricted.
 tools may include send_email, send_sms, http_request only when the description asks.
+Do not set spec.delivery. Recipients are taken from the description by the control plane, not by the model.
 schedule.mode is cron, self, hybrid, or manual. Use Europe/Istanbul.
 If the description does not name a clock time or a day part (sabah, akşam, her gün, hafta içi), schedule.mode is manual and cron is null. Do not invent a time such as 08:15.
 Put every report part the description asks for into spec.output.sections, as short titles (for example "Aylık kırılım", "İlk 5"). Do not drop one to simplify the spec.

@@ -25,13 +25,15 @@ def rotate_stored_secrets(db, dry_run: bool = False) -> dict:
     settings = get_settings()
     if not (settings.config_master_key or "").strip():
         raise RotationError("CONFIG_MASTER_KEY boş; döndürme geliştirme anahtarına yazmaz")
-    from control_plane.models import DataSourceRecord, LlmProvider
+    from control_plane.models import DataSourceRecord, DeliveryChannel, LlmProvider
 
     rewritten = 0
     for row in db.query(DataSourceRecord).all():
         rewritten += _rewrite(row, "password_ciphertext", row.name, dry_run=dry_run)
     for row in db.query(LlmProvider).all():
         rewritten += _rewrite(row, "api_key_ciphertext", row.name, dry_run=dry_run)
+    for row in db.query(DeliveryChannel).all():
+        rewritten += _rewrite(row, "credential_ciphertext", row.name, dry_run=dry_run)
     if dry_run:
         db.rollback()
     else:

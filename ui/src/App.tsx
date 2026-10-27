@@ -4,6 +4,7 @@ import { AgentDetail } from "./pages/AgentDetail";
 import { Agents } from "./pages/Agents";
 import { Dashboard } from "./pages/Dashboard";
 import { DataSources } from "./pages/DataSources";
+import { DeliveryChannels } from "./pages/DeliveryChannels";
 import { Models } from "./pages/Models";
 import { RunDetail } from "./pages/RunDetail";
 import { Runs } from "./pages/Runs";
@@ -24,6 +25,7 @@ export function App() {
         <Route path="datasources" element={<DataSources />} />
         <Route path="models" element={<Models />} />
         <Route path="secrets" element={<SecretProviders />} />
+        <Route path="delivery" element={<DeliveryChannels />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>

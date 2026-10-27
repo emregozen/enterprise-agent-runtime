@@ -58,13 +58,26 @@ def hash_token(token: str) -> str:
 
 
 def canonical_spec(payload: dict) -> dict:
-    model = AgentSpec.model_validate(payload)
+    from pydantic import ValidationError
+
+    try:
+        model = AgentSpec.model_validate(payload)
+    except ValidationError as exc:
+        delivery = [err for err in exc.errors() if "delivery" in err.get("loc", ())]
+        if not delivery:
+            raise
+        message = str(delivery[0].get("msg") or "teslimat hedefi geçersiz")
+        prefix = "Value error, "
+        if message.startswith(prefix):
+            message = message[len(prefix):]
+        raise ServiceError(message[:500], 400) from exc
     return model.canonical()
 
 
 def create_agent(db: Session, spec: dict, *, publish: bool, actor: str) -> Agent:
     data = canonical_spec(spec)
     _assert_sources(db, data)
+    _assert_delivery(db, data)
     name = data["metadata"]["name"]
     if db.query(Agent).filter(Agent.name == name).first():
         name = _unique_name(db, name)
@@ -90,6 +103,7 @@ def create_agent(db: Session, spec: dict, *, publish: bool, actor: str) -> Agent
 def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: str) -> AgentVersion:
     data = canonical_spec(spec)
     _assert_sources(db, data)
+    _assert_delivery(db, data)
     data["metadata"]["name"] = agent.name
     current = db.query(AgentVersion).filter(AgentVersion.agent_id == agent.id).count()
     version_no = current + 1
@@ -111,6 +125,12 @@ def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: 
     db.commit()
     db.refresh(row)
     return row
+
+
+def _assert_delivery(db: Session, spec: dict) -> None:
+    from control_plane.delivery_catalog import assert_spec_delivery
+
+    assert_spec_delivery(db, spec)
 
 
 def _assert_sources(db: Session, spec: dict) -> None:
@@ -394,6 +414,13 @@ def complete_run(db: Session, run: Run, payload: dict) -> Run:
             {"reason": run.needs_review_reason},
         )
     db.commit()
+    try:
+        from delivery.send import deliver_run
+
+        deliver_run(db, run)
+    except Exception:
+        logging.getLogger("control-plane").warning("delivery hook failed for run %s", run.id)
+        db.rollback()
     return run
 
 

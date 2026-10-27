@@ -167,6 +167,87 @@ class ScheduleSpec(BaseModel):
         return value
 
 
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_IN_TEXT = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
+_MAIL_WORDS = ("e-posta", "eposta", "email", "e mail", " mail", "mail at", "maille")
+
+
+class DeliveryTarget(BaseModel):
+    """Recipients are fixed here. A run cannot add or replace them."""
+
+    channel: str = ""
+    to: list[str] = Field(default_factory=list)
+    cc: list[str] = Field(default_factory=list)
+    subject: str = "{{agent_name}} – {{run_date}}"
+    when: Literal["success", "failure", "always"] = "success"
+    content: Literal["inline", "attachment", "artifacts", "link"] = "inline"
+    attachment: Literal["md", "html"] = "html"
+
+    @field_validator("to", "cc")
+    @classmethod
+    def _addresses(cls, value: list[str]) -> list[str]:
+        cleaned = []
+        for item in value:
+            address = item.strip().lower()
+            if not address:
+                continue
+            if not _EMAIL.match(address) or len(address) > 320:
+                raise ValueError(f"e-posta adresi geçersiz: {item}")
+            if address not in cleaned:
+                cleaned.append(address)
+        return cleaned
+
+    @field_validator("subject")
+    @classmethod
+    def _subject(cls, value: str) -> str:
+        text = (value or "").strip() or "{{agent_name}} – {{run_date}}"
+        if len(text) > 300:
+            raise ValueError("konu 300 karakterden uzun")
+        return text
+
+    @field_validator("channel")
+    @classmethod
+    def _channel(cls, value: str) -> str:
+        return (value or "").strip()
+
+
+def description_mentions_email(text: str) -> bool:
+    if _EMAIL_IN_TEXT.search(text or ""):
+        return True
+    folded = fold_tr(text or "")
+    return any(word in folded for word in _MAIL_WORDS)
+
+
+def extract_recipients(text: str) -> list[str]:
+    found: list[str] = []
+    for match in _EMAIL_IN_TEXT.finditer(text or ""):
+        address = match.group(0).lower()
+        if address not in found:
+            found.append(address)
+    return found
+
+
+def apply_delivery_prefill(spec: dict, description: str, channel_names: list[str]) -> dict:
+    """Recipients come from the description, not from the model."""
+    body = spec.setdefault("spec", {})
+    if not description_mentions_email(description):
+        body["delivery"] = []
+        return spec
+    channel = channel_names[0] if len(channel_names) == 1 else ""
+    body["delivery"] = [
+        {
+            "channel": channel,
+            "to": extract_recipients(description),
+            "cc": [],
+            "subject": "{{agent_name}} – {{run_date}}",
+            "when": "success",
+            "content": "inline",
+            "attachment": "html",
+        }
+    ]
+    return spec
+
+
 class OutputSpec(BaseModel):
     report: Literal["markdown"] = "markdown"
     artifacts: list[str] = Field(default_factory=lambda: ["json", "md", "svg"])
@@ -188,6 +269,7 @@ class SpecBody(BaseModel):
     runtime: RuntimeSpec = Field(default_factory=RuntimeSpec)
     schedule: ScheduleSpec = Field(default_factory=ScheduleSpec)
     output: OutputSpec = Field(default_factory=OutputSpec)
+    delivery: list[DeliveryTarget] = Field(default_factory=list)
     verification: VerificationSpec = Field(default_factory=VerificationSpec)
     dryRunRowLimit: int = Field(default=1_000, ge=1, le=100_000)
 

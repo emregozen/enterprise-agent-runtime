@@ -44,7 +44,51 @@ WHERE secret_form = 'password'
 """
 
 
+_TABLES = [
+    """
+    CREATE TABLE IF NOT EXISTS delivery_channels (
+      id UUID PRIMARY KEY,
+      name VARCHAR(63) NOT NULL UNIQUE,
+      kind VARCHAR(16) NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT true,
+      from_address VARCHAR(320) NOT NULL DEFAULT '',
+      from_name VARCHAR(120) NOT NULL DEFAULT '',
+      allow_domains JSONB NOT NULL DEFAULT '[]'::jsonb,
+      max_attachment_bytes INTEGER NOT NULL DEFAULT 2000000,
+      secret_backend VARCHAR(32) NOT NULL DEFAULT 'db',
+      secret_provider_id UUID,
+      secret_path TEXT NOT NULL DEFAULT '',
+      secret_ref JSONB NOT NULL DEFAULT '{}'::jsonb,
+      k8s_secret_name VARCHAR(253),
+      k8s_secret_key VARCHAR(253),
+      credential_ciphertext TEXT NOT NULL DEFAULT '',
+      credential_hint VARCHAR(16) NOT NULL DEFAULT '',
+      config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS delivery_logs (
+      id UUID PRIMARY KEY,
+      run_id UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      channel_id UUID REFERENCES delivery_channels(id) ON DELETE SET NULL,
+      channel_name VARCHAR(63) NOT NULL DEFAULT '',
+      recipients JSONB NOT NULL DEFAULT '{}'::jsonb,
+      subject VARCHAR(300) NOT NULL DEFAULT '',
+      status VARCHAR(16) NOT NULL DEFAULT 'failed',
+      error TEXT,
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_delivery_logs_run_id ON delivery_logs (run_id)",
+    "CREATE INDEX IF NOT EXISTS ix_delivery_logs_created_at ON delivery_logs (created_at)",
+]
+
+
 def apply_migrations(conn: Connection) -> None:
     for statement in _COLUMNS:
         conn.execute(text(statement))
     conn.execute(text(_URL_LEGACY))
+    for statement in _TABLES:
+        conn.execute(text(statement))

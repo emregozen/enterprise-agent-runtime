@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Badge, CodeBlock, Markdown, SkeletonRows } from "../components/ui";
+import { ActionButton, Badge, CodeBlock, Markdown, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useBusy } from "../lib/busy";
+import { copy } from "../lib/copy";
 import { presentText } from "../lib/errors";
 import { formatNumber, formatWhen } from "../lib/format";
+import { announceError, notify } from "../lib/notify";
 
 type Step = { ordinal: number; name: string; status: string; detail: Record<string, unknown>; created_at: string };
 type Artifact = { id: string; name: string; media_type: string; size_bytes: number };
@@ -19,9 +22,20 @@ type Run = {
   started_at: string | null;
   finished_at: string | null;
   spec: { spec?: { goal?: string } };
-  summary: { llm_calls?: { model?: string; latency_ms?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }[]; cross_checks?: { name: string; ok: boolean; sql_value?: unknown; code_value?: unknown; error?: string }[] };
+  summary: { delivery_warning?: string; llm_calls?: { model?: string; latency_ms?: number; prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }[]; cross_checks?: { name: string; ok: boolean; sql_value?: unknown; code_value?: unknown; error?: string }[] } | null;
   steps: Step[];
   artifacts: Artifact[];
+  deliveries?: Delivery[];
+};
+
+type Delivery = {
+  id: string;
+  channel_name: string;
+  recipients: { to?: string[]; cc?: string[] };
+  subject: string;
+  status: string;
+  error: string | null;
+  created_at: string;
 };
 
 const PIPELINE: [string, string][] = [
@@ -42,11 +56,25 @@ export function RunDetail() {
   const [logs, setLogs] = useState("");
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
+  const { run: busyRun, pending } = useBusy();
 
-  useEffect(() => {
+  function load() {
     api<Run>(`/api/runs/${id}`).then(setRun).catch((exc: ApiError) => setError(exc.message));
     api<{ text: string }>(`/api/runs/${id}/logs`).then((body) => setLogs(body.text || "")).catch(() => setLogs(""));
-  }, [id]);
+  }
+  useEffect(load, [id]);
+
+  function resend(logId: string) {
+    void busyRun(`resend:${logId}`, async () => {
+      try {
+        await api(`/api/runs/${id}/deliveries/${logId}/resend`, { method: "POST" });
+        notify({ tone: "success", title: copy.resent });
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
 
   async function openArtifact(artifact: Artifact) {
     const response = await fetch(`/backend/api/runs/${id}/artifacts/${artifact.id}`);
@@ -72,6 +100,13 @@ export function RunDetail() {
         <Badge status={run.status} />
       </div>
       {reason && <section className="card alert">{reason}</section>}
+      {run.summary?.delivery_warning && (
+        <section className="card notice">
+          <strong>{copy.deliveryWarningTitle}</strong>
+          <p>{presentText(run.summary.delivery_warning)}</p>
+          <p>{copy.deliveryWarningBody}</p>
+        </section>
+      )}
       <section className="grid-2">
         <article className="card">
           <h2>Steps</h2>
@@ -101,15 +136,15 @@ export function RunDetail() {
       <section className="grid-2">
         <article className="card">
           <h2>Cross-check</h2>
-          {(run.summary.cross_checks || []).length === 0 && <p>No records.</p>}
-          {(run.summary.cross_checks || []).map((check) => (
+          {(run.summary?.cross_checks || []).length === 0 && <p>No records.</p>}
+          {(run.summary?.cross_checks || []).map((check) => (
             <p key={check.name}><Badge status={check.ok ? "succeeded" : "failed"} /> {check.name}: SQL {String(check.sql_value ?? "—")} / code {String(check.code_value ?? check.error ?? "—")}</p>
           ))}
         </article>
         <article className="card">
           <h2>Model calls</h2>
-          {(run.summary.llm_calls || []).length === 0 && <p>This run has no token record.</p>}
-          {(run.summary.llm_calls || []).map((call, index) => (
+          {(run.summary?.llm_calls || []).length === 0 && <p>This run has no token record.</p>}
+          {(run.summary?.llm_calls || []).map((call, index) => (
             <p key={index}>{call.model} · {call.latency_ms} ms · {formatNumber(call.prompt_tokens ?? 0)}+{formatNumber(call.completion_tokens ?? 0)} tokens</p>
           ))}
         </article>
@@ -129,6 +164,20 @@ export function RunDetail() {
           </p>
         ))}
         {preview && <Markdown text={preview} />}
+      </section>
+      <section className="card">
+        <h2>{copy.deliverySection}</h2>
+        {(run.deliveries || []).length === 0 && <p>{copy.noDeliveries}</p>}
+        {(run.deliveries || []).map((item) => (
+          <p key={item.id}>
+            <Badge status={item.status === "sent" ? "succeeded" : item.status === "skipped" ? "paused" : "failed"} />
+            {" "}{item.channel_name || "—"} · {(item.recipients.to || []).join(", ") || "—"}
+            {item.recipients.cc && item.recipients.cc.length > 0 ? ` · cc ${item.recipients.cc.join(", ")}` : ""}
+            {" · "}{item.subject} · {formatWhen(item.created_at)}
+            {item.error ? ` · ${presentText(item.error)}` : ""}
+            <ActionButton className="btn-ghost" busy={pending(`resend:${item.id}`)} onClick={() => resend(item.id)}>{copy.resend}</ActionButton>
+          </p>
+        ))}
       </section>
       <section className="card">
         <h2>Logs</h2>

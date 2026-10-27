@@ -133,6 +133,34 @@ const EXACT: Record<string, string> = {
   "executor henüz ayakta değil": "The executor is not ready yet",
   "Job bitti ama harness rapor yazmadı": "The Job finished without a harness report",
   "Kubernetes Job başarısız oldu (backoffLimit=0)": "The Kubernetes Job failed (backoffLimit=0)",
+  "tür smtp veya http olmalı": "Kind must be smtp or http",
+  "gönderen adresi geçersiz": "The from address is invalid",
+  "alıcı izin listesi boş": "The recipient domain list is empty",
+  "ek boyutu sınırı geçersiz": "The attachment size limit is invalid",
+  "TLS biçimi none, starttls veya ssl olmalı": "TLS mode must be none, STARTTLS, or SSL",
+  "SMTP portu geçersiz": "The SMTP port is invalid",
+  "kimlik doğrulama none, bearer, basic veya header olmalı": "Auth must be none, bearer, basic, or a custom header",
+  "HTTP yöntemi POST, PUT veya PATCH olmalı": "The HTTP method must be POST, PUT, or PATCH",
+  "başlıklar JSON olmalı": "Headers must be JSON",
+  "başarı durum kodu geçersiz": "A success status code is invalid",
+  "teslimat kanalı seçilmedi": "Choose a delivery channel",
+  "en az bir alıcı gerekli": "At least one recipient is required",
+  "teslimat kanalı yok veya kapalı": "The delivery channel is missing or disabled",
+  "alıcı izin verilen etki alanında değil": "A recipient is outside the allowed domains",
+  "teslimat kanalı kapalı": "The delivery channel is disabled",
+  "teslimat tamamlanamadı": "Delivery did not finish",
+  "bu ada sahip bir teslimat kanalı var": "A delivery channel with this name already exists",
+  "teslimat kanalı yok": "Delivery channel not found",
+  "teslim kaydı yok": "Delivery record not found",
+  "SMTP sunucusu gerekli": "An SMTP host is required",
+  "teslimat adresi gerekli": "A delivery URL is required",
+  "SMTP sunucusu yok": "The SMTP host is missing",
+  "teslimat adresi yok": "The delivery URL is missing",
+  "ek boyutu sınırı aşıyor": "The attachment is over the size limit",
+  "özel başlık adı yok": "The custom header name is missing",
+  "kanal adı geçersiz": "The channel name must be 1–63 characters without spaces",
+  "konu 300 karakterden uzun": "The subject is longer than 300 characters",
+  "teslimat hedefi geçersiz": "The delivery target is invalid",
 };
 
 const PATTERNS: Array<[RegExp, string]> = [
@@ -165,6 +193,8 @@ const PATTERNS: Array<[RegExp, string]> = [
   [/^Ham SELECT için LIMIT zorunlu; agregasyon yok(.*)$/, "A raw SELECT needs a LIMIT; there is no aggregation$1"],
   [/^LIMIT 1 ile (\d+) arasında olmalı$/, "LIMIT must be between 1 and $1"],
   [/^harness çıktı kodu (\d+); tamamlanma raporu yazılmadı$/, "Harness exited with code $1 and did not write a completion report"],
+  [/^teslimat gönderilemedi: (.+)$/, "Delivery failed: $1"],
+  [/^e-posta adresi geçersiz: (.+)$/, "Invalid email address: $1"],
 ];
 
 export function presentText(value: string | null | undefined): string {

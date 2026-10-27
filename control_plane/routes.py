@@ -320,6 +320,8 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
     for _ in range(2):
         try:
             raw = parse_json_response(llm.complete(builder_messages(payload)))
+            if isinstance(raw, dict) and isinstance(raw.get("spec"), dict):
+                raw["spec"].pop("delivery", None)
             spec = AgentSpec.model_validate(raw).canonical()
             break
         except Exception as exc:  # noqa: BLE001
@@ -332,9 +334,15 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
     if body.model_ref and not any(item["sensitivity"] == "restricted" for item in sources):
         spec["spec"]["model"]["class"] = body.model_ref
         spec = AgentSpec.model_validate(spec).canonical()
-    from shared.spec import apply_default_schedule
+    from control_plane.models import DeliveryChannel
+    from shared.spec import apply_default_schedule, apply_delivery_prefill
 
     spec = apply_default_schedule(spec, body.description)
+    names = [
+        row.name
+        for row in db.query(DeliveryChannel).filter(DeliveryChannel.enabled.is_(True)).order_by(DeliveryChannel.name)
+    ]
+    spec = apply_delivery_prefill(spec, body.description, names)
     spec = AgentSpec.model_validate(spec).canonical()
     return {"spec": spec, "summary": spec_summary(spec)}
 
@@ -444,6 +452,10 @@ def get_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
     steps = db.query(RunStep).filter(RunStep.run_id == run.id).order_by(RunStep.ordinal).all()
     tools = db.query(ToolCall).filter(ToolCall.run_id == run.id).order_by(ToolCall.created_at).all()
     artifacts = db.query(Artifact).filter(Artifact.run_id == run.id).order_by(Artifact.created_at).all()
+    from control_plane.delivery_catalog import log_out
+    from control_plane.models import DeliveryLog
+
+    deliveries = db.query(DeliveryLog).filter(DeliveryLog.run_id == run.id).order_by(DeliveryLog.created_at).all()
     audits = (
         db.query(AuditEvent)
         .filter(AuditEvent.entity_id == str(run.id))
@@ -476,6 +488,7 @@ def get_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
             {"ts": event.ts.isoformat(), "actor": event.actor, "action": event.action, "detail": event.detail}
             for event in audits
         ],
+        "deliveries": [log_out(row) for row in deliveries],
     }
 
 

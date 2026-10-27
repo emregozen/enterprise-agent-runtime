@@ -1,4 +1,4 @@
-import { Bot, Database, KeyRound, LayoutDashboard, Moon, Play, Search, Settings, Sparkles, Sun } from "lucide-react";
+import { Bot, Database, KeyRound, LayoutDashboard, Mail, Moon, Play, Search, Settings, Sparkles, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "./Toaster";
@@ -12,6 +12,7 @@ const LINKS = [
   { to: "/datasources", label: copy.navSources, icon: Database, group: "configure" },
   { to: "/models", label: copy.navModels, icon: Sparkles, group: "configure" },
   { to: "/secrets", label: copy.navSecrets, icon: KeyRound, group: "configure" },
+  { to: "/delivery", label: copy.navDelivery, icon: Mail, group: "configure" },
   { to: "/settings", label: copy.navSettings, icon: Settings, group: "configure" },
 ];
 
@@ -23,6 +24,7 @@ const CRUMBS: Record<string, string> = {
   "/datasources": copy.navSources,
   "/models": copy.navModels,
   "/secrets": copy.navSecrets,
+  "/delivery": copy.navDelivery,
   "/settings": copy.navSettings,
 };
 

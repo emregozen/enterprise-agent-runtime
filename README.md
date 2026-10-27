@@ -20,6 +20,17 @@ Parola kaynağı üç yerden biri olabilir: platform veritabanı, Kubernetes Sec
 
 Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
 
+Koşum bitince rapor, kontrol düzleminden e-posta ile gidebilir. Kanal SMTP ya da kurumun HTTP e-posta API’sidir; parola yine kasa katmanındadır (platform veritabanı, Kubernetes Secret, Conjur veya CCP). Alıcılar ajanın spec’ine yazılır ve ekranda onaylanır. Model koşum sırasında alıcı ekleyemez veya değiştiremez. Kanalın izinli etki alanı sunucuda denetlenir. Gönderim koşum podundan yapılmaz; podun çıkış ağı aynı kalır. Gönderim düşerse koşum başarısız sayılmaz, koşum sayfasında uyarı görünür ve yeniden gönderilebilir. Ek olarak Markdown veya HTML vardır; PDF üretilmez. Deneme için chart’ta Mailpit kapalı gelir. Açmak için:
+
+```yaml
+mailpit:
+  enabled: true
+  route:
+    enabled: true
+```
+
+SMTP kanalında sunucu `mailpit.agent-runtime.svc.cluster.local`, kapı `1025`, TLS `none` olur. Gelen kutusu `mailpit` Route’undadır. Bu Route kimlik sormaz; CRC dışında kapalı kalsın. Testlerde aynı iş için `python -m delivery.mock_http` küçük bir HTTP e-posta API’si açar.
+
 Arayüz sol menülü bir yönetim konsoludur. Açılır listeler cam görünümlü özel bir seçicidir; kayıt, koşum, sınama ve silme işlemleri sağ altta bildirim olarak görünür ve yıkıcı silme onay ister. Ekran metinleri İngilizcedir (`en-US` tarih ve sayı). Ajan açıklaması olduğu gibi kalır; sihirbaz Türkçe tarifi kabul eder. API’nin Türkçe hata metni konsolda İngilizceye çevrilir. Metinler `ui/src/lib/copy.ts` içindedir; şimdilik yalnız İngilizce gönderilir. Açık ve koyu tema vardır. Yazı tipleri (Inter, IBM Plex Mono) ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
 
 Çıkış ağı sessizce açılmaz. Koşum podu DNS, kontrol düzlemi, Postgres ve chart’taki `extraEgress` listesi dışında çıkamaz. Ağ politikası DNS adı seçemediği için DeepSeek denemesinde `0.0.0.0/0:443` kullanılır ve özel aralıklar `except` ile kesilir. Kurumsal kurulumda bunun yerine EgressFirewall veya bir çıkış vekili gerekir.

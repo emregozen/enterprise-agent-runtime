@@ -126,6 +126,31 @@ def test_controller_can_read_provider_secrets_in_its_namespace():
     assert namespace["valueFrom"]["fieldRef"]["fieldPath"] == "metadata.namespace"
 
 
+def test_mailpit_is_off_unless_asked_and_run_pods_still_have_no_mail_egress():
+    docs = _render()
+    assert not any(doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "mailpit" for doc in docs)
+    assert not any(doc.get("kind") == "Route" and doc["metadata"]["name"] == "mailpit" for doc in docs)
+    enabled = _render("--set", "mailpit.enabled=true", "--set", "mailpit.route.enabled=true")
+    deploy = next(doc for doc in enabled if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "mailpit")
+    container = deploy["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"] == "docker.io/axllent/mailpit:v1.21.8"
+    assert container["securityContext"]["runAsNonRoot"] is True
+    assert container["securityContext"]["readOnlyRootFilesystem"] is True
+    service = next(doc for doc in enabled if doc.get("kind") == "Service" and doc["metadata"]["name"] == "mailpit")
+    ports = {item["name"]: item["port"] for item in service["spec"]["ports"]}
+    assert ports == {"smtp": 1025, "http": 8025}
+    route = next(doc for doc in enabled if doc.get("kind") == "Route" and doc["metadata"]["name"] == "mailpit")
+    assert route["spec"]["to"]["name"] == "mailpit"
+    policy = next(doc for doc in enabled if doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"] == "mailpit")
+    smtp = policy["spec"]["ingress"][0]
+    assert smtp["ports"][0]["port"] == 1025
+    assert smtp["from"][0]["podSelector"]["matchLabels"]["app"] == "control-plane"
+    run_policy = next(doc for doc in enabled if doc.get("kind") == "NetworkPolicy" and doc["metadata"]["name"] == "agent-run-egress")
+    rendered = json.dumps(run_policy)
+    assert "mailpit" not in rendered
+    assert "1025" not in rendered
+
+
 def test_postgres_shm_is_a_memory_volume():
     docs = _render()
     postgres = next(doc for doc in docs if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "postgres")

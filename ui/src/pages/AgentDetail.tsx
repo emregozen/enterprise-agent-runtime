@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { DeliveryEditor, draftsFromSpec, writeDelivery, type ChannelChoice, type DraftTarget } from "../components/DeliveryTargets";
 import { ActionButton, Badge, CodeBlock, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { useBusy } from "../lib/busy";
@@ -29,11 +30,18 @@ export function AgentDetail() {
   const [diff, setDiff] = useState("");
   const [error, setError] = useState("");
   const [goal, setGoal] = useState("");
+  const [channels, setChannels] = useState<ChannelChoice[]>([]);
+  const [targets, setTargets] = useState<DraftTarget[]>([]);
   const { run, pending } = useBusy();
 
   function load() {
-    api<Detail>(`/api/agents/${id}`).then((body) => { setAgent(body); setGoal(body.description); }).catch((exc: ApiError) => setError(exc.message));
+    api<Detail>(`/api/agents/${id}`).then((body) => {
+      setAgent(body);
+      setGoal(body.description);
+      setTargets(draftsFromSpec(body.spec));
+    }).catch((exc: ApiError) => setError(exc.message));
     api<RunRow[]>(`/api/runs?agent_id=${id}&limit=20`).then(setRuns).catch(() => setRuns([]));
+    api<ChannelChoice[]>("/api/delivery-channels").then(setChannels).catch(() => setChannels([]));
   }
   useEffect(load, [id]);
 
@@ -44,6 +52,20 @@ export function AgentDetail() {
         const spec = structuredClone(agent.spec) as { spec?: { goal?: string } };
         if (spec.spec) spec.spec.goal = goal;
         await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec, publish: true, description: goal }) });
+        notify({ tone: "success", title: copy.savedVersion });
+        load();
+      } catch (exc) {
+        announceError(exc, copy.couldNotSave);
+      }
+    });
+  }
+
+  function saveDelivery() {
+    if (!agent?.spec) return;
+    void run("delivery", async () => {
+      try {
+        const spec = writeDelivery(agent.spec as Record<string, unknown>, targets);
+        await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec, publish: true }) });
         notify({ tone: "success", title: copy.savedVersion });
         load();
       } catch (exc) {
@@ -134,6 +156,15 @@ export function AgentDetail() {
               </dl>
             ) : <p>No schedule.</p>}
           </article>
+        </section>
+      )}
+      {tab === "overview" && agent.spec && (
+        <section className="card" style={{ marginTop: 16 }}>
+          <h2>{copy.deliverySection}</h2>
+          <DeliveryEditor channels={channels} targets={targets} onChange={setTargets} />
+          <div className="goal-actions">
+            <ActionButton busy={pending("delivery")} onClick={saveDelivery}>Save as a new version</ActionButton>
+          </div>
         </section>
       )}
       {tab === "spec" && <section className="card"><CodeBlock code={JSON.stringify(agent.spec, null, 2)} /></section>}

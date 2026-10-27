@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { DeliveryEditor, deliveryReady, draftsFromSpec, writeDelivery, type ChannelChoice, type DraftTarget } from "../components/DeliveryTargets";
 import { Select } from "../components/Select";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
@@ -9,7 +10,7 @@ type Source = { id: string; name: string; dialect: string };
 type Model = { id: string; name: string; model: string; is_default: boolean };
 type Spec = Record<string, unknown>;
 
-const STEPS = ["Description", "Source and model", "Spec", "Schedule", "Review"];
+const STEPS = ["Description", "Source and model", "Spec", "Schedule", "Delivery", "Review"];
 
 function draftError(exc: unknown): string {
   if (exc instanceof ApiError) {
@@ -32,6 +33,8 @@ export function Wizard() {
   const [sourceId, setSourceId] = useState("");
   const [modelRef, setModelRef] = useState("");
   const [specText, setSpecText] = useState("");
+  const [channels, setChannels] = useState<ChannelChoice[]>([]);
+  const [targets, setTargets] = useState<DraftTarget[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -46,6 +49,7 @@ export function Wizard() {
       const preferred = rows.find((row) => row.is_default) || rows[0];
       if (preferred) setModelRef(preferred.name);
     }).catch(() => setModels([]));
+    api<ChannelChoice[]>("/api/delivery-channels").then(setChannels).catch(() => setChannels([]));
   }, []);
 
   async function generate() {
@@ -57,6 +61,7 @@ export function Wizard() {
         body: JSON.stringify({ description, owner, datasource_refs: [sourceId], model_ref: modelRef || null }),
       });
       setSpecText(JSON.stringify(draft.spec, null, 2));
+      setTargets(draftsFromSpec(draft.spec));
       setStep(2);
     } catch (exc) {
       const message = draftError(exc);
@@ -87,13 +92,41 @@ export function Wizard() {
     setError("");
   }
 
+  function enterDelivery() {
+    const body = spec();
+    if (!body) return;
+    setTargets(draftsFromSpec(body));
+    setError("");
+    setStep(4);
+  }
+
+  function enterReview() {
+    const body = spec();
+    if (!body) return;
+    if (!deliveryReady(targets)) {
+      setError(copy.deliveryNeedsRecipient);
+      notify({ tone: "error", title: copy.deliveryNeedsRecipient });
+      return;
+    }
+    setSpecText(JSON.stringify(writeDelivery(body, targets), null, 2));
+    setError("");
+    setStep(5);
+  }
+
   async function publish() {
     const body = spec();
     if (!body) return;
+    const ready = writeDelivery(body, targets);
+    if (!deliveryReady(targets)) {
+      setError(copy.deliveryNeedsRecipient);
+      notify({ tone: "error", title: copy.deliveryNeedsRecipient });
+      return;
+    }
+    setSpecText(JSON.stringify(ready, null, 2));
     setBusy(true);
     try {
-      const created = await api<{ id: string }>("/api/agents", { method: "POST", body: JSON.stringify({ spec: body, publish: true }) });
-      const name = String((body.metadata as { name?: string } | undefined)?.name || "agent");
+      const created = await api<{ id: string }>("/api/agents", { method: "POST", body: JSON.stringify({ spec: ready, publish: true }) });
+      const name = String((ready.metadata as { name?: string } | undefined)?.name || "agent");
       notify({
         tone: "success",
         title: copy.publishedAgent(name),
@@ -184,21 +217,32 @@ export function Wizard() {
             )}
           </div>
         )}
-        {step === 4 && parsed && (
+        {step === 4 && (
+          <DeliveryEditor channels={channels} targets={targets} onChange={setTargets} />
+        )}
+        {step === 5 && parsed && (
           <div>
             <p><b>{String((parsed.metadata as { name?: string })?.name || "")}</b></p>
             <p>{String((parsed.spec as { goal?: string })?.goal || "")}</p>
             <p>Model: {String((parsed.spec as { model?: { class?: string } })?.model?.class || "")}</p>
+            <p>{targets.length === 0 ? copy.deliveryNone : targets.map((target) => `${target.toText} via ${target.channel || "—"}`).join(" · ")}</p>
           </div>
         )}
         {error && <p role="alert">{error}</p>}
         <div className="row" style={{ marginTop: 16 }}>
-          {step > 0 && <button className="btn-ghost" type="button" onClick={() => setStep(step - 1)}>Back</button>}
+          {step > 0 && <button className="btn-ghost" type="button" onClick={() => {
+            if (step === 4) {
+              const body = spec();
+              if (body) setSpecText(JSON.stringify(writeDelivery(body, targets), null, 2));
+            }
+            setStep(step - 1);
+          }}>Back</button>}
           {step === 0 && <button className="btn" type="button" onClick={() => setStep(1)}>Continue</button>}
           {step === 1 && <button className="btn" type="button" disabled={busy || !sourceId} aria-busy={busy || undefined} onClick={() => void generate()}>{busy && <span className="spinner" aria-hidden />}{busy ? "Drafting…" : "Draft spec"}</button>}
           {step === 2 && <button className="btn" type="button" onClick={() => setStep(3)}>Schedule</button>}
-          {step === 3 && <button className="btn" type="button" onClick={() => setStep(4)}>Review</button>}
-          {step === 4 && <button className="btn" type="button" disabled={busy} aria-busy={busy || undefined} onClick={() => void publish()}>{busy && <span className="spinner" aria-hidden />}{busy ? "Publishing…" : "Publish"}</button>}
+          {step === 3 && <button className="btn" type="button" onClick={enterDelivery}>Delivery</button>}
+          {step === 4 && <button className="btn" type="button" onClick={enterReview}>Review</button>}
+          {step === 5 && <button className="btn" type="button" disabled={busy} aria-busy={busy || undefined} onClick={() => void publish()}>{busy && <span className="spinner" aria-hidden />}{busy ? "Publishing…" : "Publish"}</button>}
         </div>
       </section>
     </>

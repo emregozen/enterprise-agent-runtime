@@ -69,6 +69,7 @@ def test_sources_models_and_agent_lifecycle(datasource, db):
             assert draft.status_code == 200, draft.text
             spec = draft.json()["spec"]
             assert spec["spec"]["model"]["class"] == "deepseek-flash"
+            spec["spec"]["delivery"] = []
             agent = client.post("/api/agents", json={"spec": spec, "publish": True})
             assert agent.status_code == 201, agent.text
             agent_id = agent.json()["id"]
