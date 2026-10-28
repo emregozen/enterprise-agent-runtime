@@ -166,6 +166,8 @@ export const copy = {
   deliveryWarningTitle: "Delivery did not finish",
   deliveryWarningBody: "The run itself is unchanged. Use Resend after the channel is reachable.",
   channel: "Channel",
+  waiting: "Waiting",
+  stepDidNotRun: "Did not run",
   skipped: "Skipped",
   sent: "Sent",
   failed: "Failed",

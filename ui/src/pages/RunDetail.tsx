@@ -38,6 +38,8 @@ type Delivery = {
   created_at: string;
 };
 
+const ACTIVE = new Set(["pending", "running"]);
+
 const PIPELINE: [string, string][] = [
   ["introspect", "Schema"],
   ["plan", "Plan"],
@@ -114,11 +116,14 @@ export function RunDetail() {
             {PIPELINE.map(([key, label]) => {
               const step = byName.get(key);
               const tone = !step ? "" : step.status === "succeeded" ? "ok" : step.status === "failed" ? "bad" : "warn";
+              const gap = ACTIVE.has(run.status)
+                ? <span className="badge">{copy.waiting}</span>
+                : <span className="badge muted" title={copy.stepDidNotRun}>{copy.skipped}</span>;
               return (
                 <div className={`item ${tone}`} key={key}>
                   <div className="rail" />
                   <div>
-                    <strong>{label}</strong> {step ? <Badge status={step.status} /> : <span className="badge">Waiting</span>}
+                    <strong>{label}</strong> {step ? <Badge status={step.status} /> : gap}
                     <div>{step ? formatWhen(step.created_at) : "—"}</div>
                   </div>
                 </div>
