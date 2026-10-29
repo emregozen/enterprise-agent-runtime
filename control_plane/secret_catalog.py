@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from control_plane.models import DataSourceRecord, LlmProvider, SecretProvider
+from control_plane.models import DataSourceRecord, DeliveryChannel, LlmProvider, SecretProvider
 
 
 def secret_provider_out(row: SecretProvider) -> dict:
@@ -21,6 +21,8 @@ def secret_provider_out(row: SecretProvider) -> dict:
         "tls_key_key": row.tls_key_key or "",
         "credential_namespace": row.credential_namespace or "",
         "enabled": bool(row.enabled),
+        "owner_group_id": str(row.owner_group_id) if row.owner_group_id else None,
+        "created_by": str(row.created_by) if row.created_by else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -80,4 +82,5 @@ def apply_secret_provider(row: SecretProvider, body, *, creating: bool) -> None:
 def provider_in_use(db, provider_id) -> bool:
     sources = db.query(DataSourceRecord).filter(DataSourceRecord.secret_provider_id == provider_id).count()
     models = db.query(LlmProvider).filter(LlmProvider.secret_provider_id == provider_id).count()
-    return bool(sources or models)
+    channels = db.query(DeliveryChannel).filter(DeliveryChannel.secret_provider_id == provider_id).count()
+    return bool(sources or models or channels)

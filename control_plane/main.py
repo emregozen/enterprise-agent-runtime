@@ -8,6 +8,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from control_plane.auth_routes import auth_router
+from control_plane.boards import router as boards_router
+from control_plane.chat import router as chat_router
 from control_plane.db import init_db
 from control_plane.delivery_routes import delivery
 from control_plane.routes import internal, public
@@ -48,6 +51,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(auth_router)
+    app.include_router(chat_router)
+    app.include_router(boards_router)
     app.include_router(public)
     app.include_router(delivery)
     app.include_router(internal)

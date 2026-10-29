@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc6e4d" />
+      <stop offset="100%" stop-color="#b65032" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)" />
+  
+  <!-- Central Circle Ring -->
+  <circle cx="256" cy="256" r="124" stroke="#faf9f5" stroke-width="24" fill="none" />
+  
+  <!-- Orbital Ring (rotated ellipse) -->
+  <g transform="translate(256, 256) rotate(-34)">
+    <ellipse cx="0" cy="0" rx="192" ry="74" stroke="#faf9f5" stroke-width="24" fill="none" />
+  </g>
+  
+  <!-- 4-pointed central star -->
+  <path d="M 256,168
+           Q 256,238 214,256
+           Q 256,274 256,344
+           Q 256,274 298,256
+           Q 256,238 256,168 Z"
+        fill="#faf9f5" />
+</svg>

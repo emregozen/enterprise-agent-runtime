@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ChartDataToggle, chartDataOf, withChartData } from "../components/ChartDataToggle";
 import { DeliveryEditor, draftsFromSpec, writeDelivery, type ChannelChoice, type DraftTarget } from "../components/DeliveryTargets";
 import { ActionButton, Badge, CodeBlock, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
@@ -33,6 +35,7 @@ export function AgentDetail() {
   const [channels, setChannels] = useState<ChannelChoice[]>([]);
   const [targets, setTargets] = useState<DraftTarget[]>([]);
   const { run, pending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Detail>(`/api/agents/${id}`).then((body) => {
@@ -45,6 +48,17 @@ export function AgentDetail() {
   }
   useEffect(load, [id]);
 
+  const hasActiveRun = runs.some((item) => item.status === "running" || item.status === "pending");
+
+  useEffect(() => {
+    if (!hasActiveRun || !id) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      api<RunRow[]>(`/api/runs?agent_id=${id}&limit=20`).then(setRuns).catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRun, id]);
+
   function saveGoal() {
     if (!agent?.spec) return;
     void run("save", async () => {
@@ -53,6 +67,19 @@ export function AgentDetail() {
         if (spec.spec) spec.spec.goal = goal;
         await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec, publish: true, description: goal }) });
         notify({ tone: "success", title: copy.savedVersion });
+        load();
+      } catch (exc) {
+        announceError(exc, copy.couldNotSave);
+      }
+    });
+  }
+
+  function saveChartData(enabled: boolean) {
+    if (!agent?.spec) return;
+    void run("chart-data", async () => {
+      try {
+        await api(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify({ spec: withChartData(agent.spec as Record<string, unknown>, enabled), publish: true }) });
+        notify({ tone: "success", title: enabled ? "Chart data enabled. Saved as a new version." : "Chart data disabled. Saved as a new version." });
         load();
       } catch (exc) {
         announceError(exc, copy.couldNotSave);
@@ -123,8 +150,21 @@ export function AgentDetail() {
         </div>
         <div className="row">
           <Badge status={agent.schedule?.paused ? "paused" : agent.status} />
-          <ActionButton busy={pending("run")} onClick={startRun}>Run now</ActionButton>
-          <ActionButton className="btn-ghost" busy={pending("pause")} onClick={togglePause}>
+          <ActionButton
+            busy={pending("run")}
+            disabled={!can("agent:run")}
+            title={!can("agent:run") ? copy.permissionDeniedHint : undefined}
+            onClick={startRun}
+          >
+            Run now
+          </ActionButton>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending("pause")}
+            disabled={!can("schedule:pause")}
+            title={!can("schedule:pause") ? copy.permissionDeniedHint : undefined}
+            onClick={togglePause}
+          >
             {agent.schedule?.paused ? "Resume" : "Pause"}
           </ActionButton>
         </div>
@@ -138,9 +178,16 @@ export function AgentDetail() {
         <section className="grid-2">
           <article className="card goal-card">
             <h2>Goal</h2>
-            <textarea rows={5} value={goal} onChange={(event) => setGoal(event.target.value)} aria-label="Goal" />
+            <textarea rows={5} value={goal} disabled={!can("agent:write")} onChange={(event) => setGoal(event.target.value)} aria-label="Goal" />
             <div className="goal-actions">
-              <ActionButton busy={pending("save")} onClick={saveGoal}>Save as a new version</ActionButton>
+              <ActionButton
+                busy={pending("save")}
+                disabled={!can("agent:write")}
+                title={!can("agent:write") ? copy.permissionDeniedHint : undefined}
+                onClick={saveGoal}
+              >
+                Save as a new version
+              </ActionButton>
             </div>
           </article>
           <article className="card">
@@ -160,10 +207,28 @@ export function AgentDetail() {
       )}
       {tab === "overview" && agent.spec && (
         <section className="card" style={{ marginTop: 16 }}>
+          <h2>Output</h2>
+          <ChartDataToggle
+            checked={chartDataOf(agent.spec)}
+            disabled={pending("chart-data") || !can("agent:write")}
+            onChange={saveChartData}
+          />
+          <p className="muted" style={{ fontSize: 13 }}>Changing this saves a new version. It applies from the next run, so refresh the board afterwards.</p>
+        </section>
+      )}
+      {tab === "overview" && agent.spec && (
+        <section className="card" style={{ marginTop: 16 }}>
           <h2>{copy.deliverySection}</h2>
           <DeliveryEditor channels={channels} targets={targets} onChange={setTargets} />
           <div className="goal-actions">
-            <ActionButton busy={pending("delivery")} onClick={saveDelivery}>Save as a new version</ActionButton>
+            <ActionButton
+              busy={pending("delivery")}
+              disabled={!can("agent:write")}
+              title={!can("agent:write") ? copy.permissionDeniedHint : undefined}
+              onClick={saveDelivery}
+            >
+              Save as a new version
+            </ActionButton>
           </div>
         </section>
       )}

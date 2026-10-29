@@ -4,6 +4,7 @@ import { EMPTY_SECRET_SOURCE, SecretSourceFields, secretSourceFromRow, type Secr
 import { Select } from "../components/Select";
 import { ActionButton, Badge, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { announceError, notify } from "../lib/notify";
@@ -74,6 +75,7 @@ export function DeliveryChannels() {
   const [providers, setProviders] = useState<SecretProvider[]>([]);
   const [pendingDelete, setPendingDelete] = useState<Channel | null>(null);
   const { run, pending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Channel[]>("/api/delivery-channels").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -203,9 +205,33 @@ export function DeliveryChannels() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
-          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>{copy.edit}</button>
-          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending(`test:${row.original.id}`)}
+            disabled={!can("delivery_channel:test")}
+            title={!can("delivery_channel:test") ? copy.permissionDeniedHint : undefined}
+            onClick={() => test(row.original.id)}
+          >
+            {copy.test}
+          </ActionButton>
+          <button
+            className="btn-ghost"
+            type="button"
+            disabled={!can("delivery_channel:write")}
+            title={!can("delivery_channel:write") ? copy.permissionDeniedHint : undefined}
+            onClick={() => open(row.original)}
+          >
+            {copy.edit}
+          </button>
+          <button
+            className="btn-danger"
+            type="button"
+            disabled={!can("delivery_channel:delete")}
+            title={!can("delivery_channel:delete") ? copy.permissionDeniedHint : undefined}
+            onClick={() => setPendingDelete(row.original)}
+          >
+            {copy.delete}
+          </button>
         </span>
       ),
     },
@@ -222,7 +248,15 @@ export function DeliveryChannels() {
           <h1>{copy.deliveryTitle}</h1>
           <p>{copy.deliveryLead}</p>
         </div>
-        <button className="btn" type="button" onClick={() => open()}>{copy.newChannel}</button>
+        <button
+          className="btn"
+          type="button"
+          disabled={!can("delivery_channel:write")}
+          title={!can("delivery_channel:write") ? copy.permissionDeniedHint : undefined}
+          onClick={() => open()}
+        >
+          {copy.newChannel}
+        </button>
       </div>
       <section className="card">
         {rows.length === 0

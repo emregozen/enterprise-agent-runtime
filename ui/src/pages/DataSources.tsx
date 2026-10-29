@@ -4,6 +4,7 @@ import { Select } from "../components/Select";
 import { EMPTY_SECRET_SOURCE, SecretSourceFields, secretSourceFromRow, type SecretSource } from "../components/SecretSourceFields";
 import { ActionButton, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { announceError, notify } from "../lib/notify";
@@ -59,6 +60,7 @@ export function DataSources() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [pendingDelete, setPendingDelete] = useState<Source | null>(null);
   const { run, pending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Source[]>("/api/datasources").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -143,9 +145,33 @@ export function DataSources() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
-          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, ...row.original, ...secretSourceFromRow(row.original), allow_tables: row.original.allow_tables.join(", "), password: "" }); }}>{copy.edit}</button>
-          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending(`test:${row.original.id}`)}
+            disabled={!can("datasource:test")}
+            title={!can("datasource:test") ? copy.permissionDeniedHint : undefined}
+            onClick={() => test(row.original.id)}
+          >
+            {copy.test}
+          </ActionButton>
+          <button
+            className="btn-ghost"
+            type="button"
+            disabled={!can("datasource:write")}
+            title={!can("datasource:write") ? copy.permissionDeniedHint : undefined}
+            onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, ...row.original, ...secretSourceFromRow(row.original), allow_tables: row.original.allow_tables.join(", "), password: "" }); }}
+          >
+            {copy.edit}
+          </button>
+          <button
+            className="btn-danger"
+            type="button"
+            disabled={!can("datasource:delete")}
+            title={!can("datasource:delete") ? copy.permissionDeniedHint : undefined}
+            onClick={() => setPendingDelete(row.original)}
+          >
+            {copy.delete}
+          </button>
         </span>
       ),
     },
@@ -162,7 +188,15 @@ export function DataSources() {
           <h1>Data sources</h1>
           <p>Postgres and Oracle. A password can stay encrypted on the platform, or point at a Kubernetes Secret or a CyberArk record. By default the reference is only the password. Host and user stay on this form. The value is never returned.</p>
         </div>
-        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>
+        <button
+          className="btn"
+          type="button"
+          disabled={!can("datasource:write")}
+          title={!can("datasource:write") ? copy.permissionDeniedHint : undefined}
+          onClick={() => { setEditing(null); setForm(EMPTY); }}
+        >
+          New source
+        </button>
       </div>
       <section className="card">
         <input className="search" aria-label="Search sources" value={q} placeholder="Name" onChange={(event) => setQ(event.target.value)} />

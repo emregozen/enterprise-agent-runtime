@@ -156,6 +156,7 @@ def main() -> None:
         ctx = RunContext(
             run_id=args.run_id,
             goal=body["goal"],
+            chart_data=bool((body.get("output") or {}).get("chartData", False)),
             spec=spec,
             sources=_bindings(context),
             workdir=str(work),

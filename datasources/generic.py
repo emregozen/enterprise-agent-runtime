@@ -7,7 +7,16 @@ import pyarrow.parquet as pq
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
-from datasources.base import ColumnInfo, FetchResult, PlanInfo, SchemaCatalog, TableInfo, arrow_record, assert_select_prefix
+from datasources.base import (
+    ColumnInfo,
+    FetchResult,
+    PlanInfo,
+    SchemaCatalog,
+    TableInfo,
+    arrow_record,
+    assert_select_prefix,
+    json_safe_record,
+)
 from sqlguard import guard_sql
 
 
@@ -73,6 +82,16 @@ class GenericSource:
         if row is None:
             return None
         return row[0]
+
+    def query_rows(self, sql: str, max_rows: int = 100) -> tuple[list[str], list[dict]]:
+        guarded = self._guarded(sql)
+        assert_select_prefix(guarded)
+        cap = max(1, min(int(max_rows), self.max_limit))
+        with self._connect() as conn:
+            result = conn.execute(text(guarded))
+            columns = list(result.keys())
+            chunk = result.fetchmany(cap)
+        return columns, [json_safe_record(columns, row) for row in chunk]
 
     def fetch_to_parquet(self, sql: str, path: str, batch_rows: int) -> FetchResult:
         guarded = self._guarded(sql)

@@ -40,6 +40,8 @@ def channel_out(row: DeliveryChannel) -> dict:
         "credential_set": configured,
         "credential_hint": hint,
         "config": _public_config(row),
+        "owner_group_id": str(row.owner_group_id) if row.owner_group_id else None,
+        "created_by": str(row.created_by) if row.created_by else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -72,7 +74,12 @@ def apply_channel(db: Session, row: DeliveryChannel, body, *, creating: bool) ->
     _assign_secret(db, row, body, creating=creating)
 
 
-def assert_spec_delivery(db: Session, spec: dict) -> None:
+def assert_spec_delivery(
+    db: Session,
+    spec: dict,
+    *,
+    allowed_group_ids: list[uuid.UUID] | None = None,
+) -> None:
     from control_plane.service import ServiceError
 
     targets = (spec.get("spec") or {}).get("delivery") or []
@@ -84,7 +91,14 @@ def assert_spec_delivery(db: Session, spec: dict) -> None:
             raise ServiceError("teslimat kanalı seçilmedi", 400)
         if not recipients:
             raise ServiceError("en az bir alıcı gerekli", 400)
-        channel = db.query(DeliveryChannel).filter(DeliveryChannel.name == name).one_or_none()
+        query = db.query(DeliveryChannel).filter(DeliveryChannel.name == name)
+        if allowed_group_ids is not None:
+            if not allowed_group_ids:
+                channel = None
+            else:
+                channel = query.filter(DeliveryChannel.owner_group_id.in_(allowed_group_ids)).one_or_none()
+        else:
+            channel = query.one_or_none()
         if channel is None or not channel.enabled:
             raise ServiceError("teslimat kanalı yok veya kapalı", 400)
         blocked = reject_recipients(recipients + copied, list(channel.allow_domains or []))
@@ -251,7 +265,7 @@ def _assign_secret(db: Session, row: DeliveryChannel, body, *, creating: bool) -
         row.k8s_secret_name = name
         row.k8s_secret_key = (body.k8s_secret_key or "").strip() or "password"
         return
-    provider = _provider_or_error(db, body.secret_provider_id, backend)
+    provider = _provider_or_error(db, body.secret_provider_id, backend, owner_group_id=row.owner_group_id)
     row.secret_provider_id = provider.id
     if backend == "conjur":
         path = (body.secret_path or "").strip()

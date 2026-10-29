@@ -1,0 +1,38 @@
+# Tight memory requests for CRC when Conjur + Oracle + Keycloak + Agent Runtime run together on an 11GB VM.
+controlPlane:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+ui:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+postgres:
+  storage: 4Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+keycloak:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+runRequests:
+  cpu: 50m
+  memory: 64Mi
+  ephemeralStorage: 1Gi

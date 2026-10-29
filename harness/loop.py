@@ -12,6 +12,7 @@ from shared.llm import make_llm, parse_json_response
 from shared.otel import span
 from harness.sections import missing_sections, requested_sections
 from shared.report import compose_report, dig, values_close
+from shared.spec import goal_for_planning
 from sqlguard import guard_sql
 
 PLANNER_SYSTEM = """You are the planner inside an enterprise agent run pod.
@@ -98,6 +99,7 @@ class RunContext:
     numeric_tolerance: float = 1.0
     timeout_seconds: int = 120
     fault_rounds: int = 0
+    chart_data: bool = False
     llm_mode: str | None = None
     max_preview_rows: int = 200
     max_cost: float = 10_000_000
@@ -391,7 +393,7 @@ def _attach_llm_calls(outcome, llm) -> None:
 def _plan_payload(ctx: RunContext, catalog: dict, repair: dict | None) -> dict:
     return {
         "role": "plan",
-        "goal": ctx.goal,
+        "goal": goal_for_planning(ctx.goal, ctx.chart_data),
         "dialect": ctx.sources[0].dialect,
         "catalog": catalog,
         "tools": ctx.tools,

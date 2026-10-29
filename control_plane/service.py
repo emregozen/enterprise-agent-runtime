@@ -74,10 +74,23 @@ def canonical_spec(payload: dict) -> dict:
     return model.canonical()
 
 
-def create_agent(db: Session, spec: dict, *, publish: bool, actor: str) -> Agent:
+def create_agent(
+    db: Session,
+    spec: dict,
+    *,
+    publish: bool,
+    actor: str,
+    owner_group_id: uuid.UUID | None = None,
+    created_by: uuid.UUID | None = None,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> Agent:
+    if owner_group_id is None:
+        from control_plane.auth import ensure_default_group
+
+        owner_group_id = ensure_default_group(db).id
     data = canonical_spec(spec)
-    _assert_sources(db, data)
-    _assert_delivery(db, data)
+    _assert_sources(db, data, allowed_group_ids=allowed_group_ids)
+    _assert_delivery(db, data, allowed_group_ids=allowed_group_ids)
     name = data["metadata"]["name"]
     if db.query(Agent).filter(Agent.name == name).first():
         name = _unique_name(db, name)
@@ -86,24 +99,44 @@ def create_agent(db: Session, spec: dict, *, publish: bool, actor: str) -> Agent
         name=name,
         description=data["spec"]["goal"][:500],
         owner=data["metadata"]["owner"],
+        owner_group_id=owner_group_id,
+        created_by=created_by,
         status="published" if publish else "draft",
         current_version=1 if publish else None,
     )
     db.add(agent)
     db.flush()
-    db.add(AgentVersion(agent_id=agent.id, version=1, spec=data, status="published" if publish else "draft"))
+    db.add(
+        AgentVersion(
+            agent_id=agent.id,
+            version=1,
+            spec=data,
+            status="published" if publish else "draft",
+            owner_group_id=owner_group_id,
+            created_by=created_by,
+        )
+    )
     if publish:
-        _upsert_schedule(db, agent, data)
-    audit(db, actor, "agent.created", "agent", str(agent.id), {"name": name, "publish": publish})
+        _upsert_schedule(db, agent, data, created_by=created_by)
+    audit(db, actor, "agent.created", "agent", str(agent.id), {"name": name, "publish": publish, "owner_group_id": str(owner_group_id)})
     db.commit()
     db.refresh(agent)
     return agent
 
 
-def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: str) -> AgentVersion:
+def add_version(
+    db: Session,
+    agent: Agent,
+    spec: dict,
+    *,
+    publish: bool,
+    actor: str,
+    created_by: uuid.UUID | None = None,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> AgentVersion:
     data = canonical_spec(spec)
-    _assert_sources(db, data)
-    _assert_delivery(db, data)
+    _assert_sources(db, data, allowed_group_ids=allowed_group_ids)
+    _assert_delivery(db, data, allowed_group_ids=allowed_group_ids)
     data["metadata"]["name"] = agent.name
     current = db.query(AgentVersion).filter(AgentVersion.agent_id == agent.id).count()
     version_no = current + 1
@@ -113,6 +146,8 @@ def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: 
         version=version_no,
         spec=data,
         status="published" if publish else "draft",
+        owner_group_id=agent.owner_group_id,
+        created_by=created_by,
     )
     db.add(row)
     agent.updated_at = utcnow()
@@ -120,26 +155,26 @@ def add_version(db: Session, agent: Agent, spec: dict, *, publish: bool, actor: 
         agent.status = "published"
         agent.current_version = version_no
         agent.description = data["spec"]["goal"][:500]
-        _upsert_schedule(db, agent, data)
-        audit(db, actor, "agent.published", "agent", str(agent.id), {"version": version_no})
+        _upsert_schedule(db, agent, data, created_by=created_by)
+        audit(db, actor, "agent.published", "agent", str(agent.id), {"version": version_no, "owner_group_id": str(agent.owner_group_id) if agent.owner_group_id else None})
     db.commit()
     db.refresh(row)
     return row
 
 
-def _assert_delivery(db: Session, spec: dict) -> None:
+def _assert_delivery(db: Session, spec: dict, *, allowed_group_ids: set[uuid.UUID] | None = None) -> None:
     from control_plane.delivery_catalog import assert_spec_delivery
 
-    assert_spec_delivery(db, spec)
+    assert_spec_delivery(db, spec, allowed_group_ids=allowed_group_ids)
 
 
-def _assert_sources(db: Session, spec: dict) -> None:
+def _assert_sources(db: Session, spec: dict, *, allowed_group_ids: set[uuid.UUID] | None = None) -> None:
     refs = spec["spec"]["datasources"]
     sensitivities = []
     from control_plane.catalog import find_datasource
 
     for ref in refs:
-        row = find_datasource(db, ref["ref"])
+        row = find_datasource(db, ref["ref"], allowed_group_ids=allowed_group_ids)
         if row is None or not row.enabled:
             raise ServiceError(f"veri kaynağı yok: {ref['ref']}", 400)
         allowed = {str(table).lower() for table in row.allow_tables}
@@ -161,12 +196,16 @@ def _unique_name(db: Session, name: str) -> str:
     raise ServiceError("ajan adı üretilemedi", 409)
 
 
-def _upsert_schedule(db: Session, agent: Agent, spec: dict) -> Schedule:
+def _upsert_schedule(db: Session, agent: Agent, spec: dict, *, created_by: uuid.UUID | None = None) -> Schedule:
     body = spec["spec"]["schedule"]
     row = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
     if row is None:
-        row = Schedule(agent_id=agent.id)
+        row = Schedule(agent_id=agent.id, owner_group_id=agent.owner_group_id, created_by=created_by or agent.created_by)
         db.add(row)
+    else:
+        row.owner_group_id = agent.owner_group_id
+        if created_by is not None:
+            row.created_by = created_by
     row.mode = body["mode"]
     row.cron = body.get("cron")
     row.timezone = body.get("timeZone") or "Europe/Istanbul"
@@ -195,7 +234,15 @@ def published_spec(db: Session, agent: Agent) -> tuple[int, dict]:
     return row.version, row.spec
 
 
-def trigger_run(db: Session, agent: Agent, *, trigger: str, dry_run: bool, actor: str) -> tuple[Run, str]:
+def trigger_run(
+    db: Session,
+    agent: Agent,
+    *,
+    trigger: str,
+    dry_run: bool,
+    actor: str,
+    created_by: uuid.UUID | None = None,
+) -> tuple[Run, str]:
     if agent.status == "deleted":
         raise ServiceError("silinmiş ajan çalıştırılamaz", 409)
     if dry_run:
@@ -223,6 +270,8 @@ def trigger_run(db: Session, agent: Agent, *, trigger: str, dry_run: bool, actor
     run = Run(
         agent_id=agent.id,
         agent_name=agent.name,
+        owner_group_id=agent.owner_group_id,
+        created_by=created_by,
         spec_version=version,
         spec_snapshot=spec,
         trigger="dry_run" if dry_run else trigger,
@@ -231,7 +280,18 @@ def trigger_run(db: Session, agent: Agent, *, trigger: str, dry_run: bool, actor
         run_token_hash=hash_token(token),
     )
     db.add(run)
-    audit(db, actor, "run.requested", "run", str(run.id), {"trigger": run.trigger, "version": version})
+    audit(
+        db,
+        actor,
+        "run.requested",
+        "run",
+        str(run.id),
+        {
+            "trigger": run.trigger,
+            "version": version,
+            "owner_group_id": str(agent.owner_group_id) if agent.owner_group_id else None,
+        },
+    )
     db.commit()
     db.refresh(run)
     from control_plane.backends import get_backend
@@ -251,28 +311,24 @@ def trigger_run(db: Session, agent: Agent, *, trigger: str, dry_run: bool, actor
 
 def claim_due(db: Session) -> list[tuple[uuid.UUID, str]]:
     now = datetime.now(timezone.utc)
-    locked = db.execute(text("SELECT pg_try_advisory_xact_lock(8242001)")).scalar()
-    if not locked:
-        return []
-    rows = db.execute(
-        text(
-            """
-            SELECT id FROM schedules
-            WHERE paused = false
-              AND next_run_at IS NOT NULL
-              AND next_run_at <= :now
-            ORDER BY next_run_at
-            FOR UPDATE SKIP LOCKED
-            LIMIT 5
-            """
-        ),
-        {"now": now},
-    ).fetchall()
+    if db.get_bind().dialect.name == "postgresql":
+        locked = db.execute(text("SELECT pg_try_advisory_xact_lock(8242001)")).scalar()
+        if not locked:
+            return []
+    schedules = (
+        db.query(Schedule)
+        .filter(
+            Schedule.paused.is_(False),
+            Schedule.next_run_at.isnot(None),
+            Schedule.next_run_at <= now,
+        )
+        .order_by(Schedule.next_run_at)
+        .with_for_update(skip_locked=True)
+        .limit(5)
+        .all()
+    )
     created: list[tuple[uuid.UUID, str]] = []
-    for (schedule_id,) in rows:
-        schedule = db.get(Schedule, schedule_id)
-        if schedule is None:
-            continue
+    for schedule in schedules:
         agent = db.get(Agent, schedule.agent_id)
         if agent is None or agent.status != "published":
             schedule.next_run_at = _skip_forward(schedule, now)
@@ -280,13 +336,13 @@ def claim_due(db: Session) -> list[tuple[uuid.UUID, str]]:
         running = db.query(Run).filter(Run.agent_id == agent.id, Run.status.in_(["pending", "running"])).count()
         if running and schedule.concurrency == "forbid":
             schedule.next_run_at = now + __import__("datetime").timedelta(seconds=60)
-            audit(db, "scheduler", "schedule.deferred", "schedule", str(schedule.id), {"reason": "concurrency"})
+            audit(db, "scheduler", "schedule.deferred", "schedule", str(schedule.id), {"reason": "concurrency", "owner_group_id": str(agent.owner_group_id) if agent.owner_group_id else None})
             continue
         if _runs_today(db, agent.id, schedule.timezone) >= schedule.max_runs_per_day:
             schedule.next_run_at = (
                 advance_past_today(schedule.cron, schedule.timezone, now) if schedule.cron else _skip_forward(schedule, now)
             )
-            audit(db, "scheduler", "schedule.deferred", "schedule", str(schedule.id), {"reason": "daily_limit"})
+            audit(db, "scheduler", "schedule.deferred", "schedule", str(schedule.id), {"reason": "daily_limit", "owner_group_id": str(agent.owner_group_id) if agent.owner_group_id else None})
             continue
         try:
             version, spec = published_spec(db, agent)
@@ -298,6 +354,8 @@ def claim_due(db: Session) -> list[tuple[uuid.UUID, str]]:
         run = Run(
             agent_id=agent.id,
             agent_name=agent.name,
+            owner_group_id=agent.owner_group_id,
+            created_by=None,
             spec_version=version,
             spec_snapshot=spec,
             trigger="cron" if schedule.mode in {"cron", "hybrid"} else "self",
@@ -318,7 +376,17 @@ def claim_due(db: Session) -> list[tuple[uuid.UUID, str]]:
             schedule.next_run_at = compute_next_cron(schedule.cron, schedule.timezone, now)
         else:
             schedule.next_run_at = None
-        audit(db, "scheduler", "run.requested", "run", str(run.id), {"trigger": run.trigger})
+        audit(
+            db,
+            "scheduler",
+            "run.requested",
+            "run",
+            str(run.id),
+            {
+                "trigger": run.trigger,
+                "owner_group_id": str(agent.owner_group_id) if agent.owner_group_id else None,
+            },
+        )
         created.append((run.id, token))
     return created
 
@@ -547,12 +615,13 @@ def get_settings_safe():
     return get_settings()
 
 
-def load_sources_for_spec(db: Session, spec: dict) -> list[DataSourceRecord]:
+def load_sources_for_spec(db: Session, spec: dict, *, allowed_group_ids=None) -> list[DataSourceRecord]:
     from control_plane.catalog import find_datasource
 
+    allowed_set = set(allowed_group_ids) if allowed_group_ids is not None else None
     ordered = []
     for item in spec["spec"]["datasources"]:
-        row = find_datasource(db, item["ref"])
+        row = find_datasource(db, item["ref"], allowed_group_ids=allowed_set)
         if row is None:
             raise ServiceError(f"veri kaynağı yok: {item['ref']}", 400)
         ordered.append(row)

@@ -64,7 +64,28 @@ class DataSource(Protocol):
 
     def scalar(self, sql: str): ...
 
+    def query_rows(self, sql: str, max_rows: int = 100) -> tuple[list[str], list[dict]]: ...
+
     def close(self) -> None: ...
+
+
+def json_safe_record(columns: list[str], row) -> dict:
+    """Convert a database tuple into a JSON-serializable dict with bounded string sizes."""
+    out: dict = {}
+    for name, value in zip(columns, row, strict=False):
+        if isinstance(value, Decimal):
+            out[name] = float(value)
+        elif hasattr(value, "isoformat"):
+            out[name] = value.isoformat()
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            out[name] = f"<{len(value)} bytes>"
+        elif isinstance(value, str) and len(value) > 500:
+            out[name] = value[:500] + "…"
+        elif isinstance(value, (int, float, bool, str)) or value is None:
+            out[name] = value
+        else:
+            out[name] = str(value)[:500]
+    return out
 
 
 def arrow_record(columns: list[str], row) -> dict:

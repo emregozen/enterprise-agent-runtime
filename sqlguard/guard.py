@@ -54,7 +54,7 @@ class GuardResult:
 
 
 def _dialect(name: str) -> str:
-    mapping = {"postgresql": "postgres", "postgres": "postgres", "oracle": "oracle"}
+    mapping = {"postgresql": "postgres", "postgres": "postgres", "oracle": "oracle", "ansi": ""}
     return mapping.get(name.lower(), name.lower() or "postgres")
 
 

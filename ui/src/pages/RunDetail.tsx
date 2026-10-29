@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ActionButton, Badge, CodeBlock, Markdown, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { presentText } from "../lib/errors";
 import { formatNumber, formatWhen } from "../lib/format";
-import { announceError, notify } from "../lib/notify";
+import { announceError, announceRun, notify } from "../lib/notify";
 
 type Step = { ordinal: number; name: string; status: string; detail: Record<string, unknown>; created_at: string };
 type Artifact = { id: string; name: string; media_type: string; size_bytes: number };
@@ -54,23 +55,73 @@ const PIPELINE: [string, string][] = [
 
 export function RunDetail() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const [run, setRun] = useState<Run | null>(null);
   const [logs, setLogs] = useState("");
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
   const { run: busyRun, pending } = useBusy();
+  const { can } = useAuth();
+  const inflightRef = useRef(false);
 
-  function load() {
-    api<Run>(`/api/runs/${id}`).then(setRun).catch((exc: ApiError) => setError(exc.message));
-    api<{ text: string }>(`/api/runs/${id}/logs`).then((body) => setLogs(body.text || "")).catch(() => setLogs(""));
-  }
-  useEffect(load, [id]);
+  const load = useCallback(() => {
+    if (!id || inflightRef.current) return;
+    inflightRef.current = true;
+    Promise.all([
+      api<Run>(`/api/runs/${id}`).then(setRun).catch((exc: ApiError) => setError(exc.message)),
+      api<{ text: string }>(`/api/runs/${id}/logs`).then((body) => setLogs(body.text || "")).catch(() => setLogs("")),
+    ]).finally(() => {
+      inflightRef.current = false;
+    });
+  }, [id]);
+
+  useEffect(() => {
+    inflightRef.current = false;
+    load();
+  }, [load]);
+
+  const isActive = Boolean(run && ACTIVE.has(run.status));
+
+  useEffect(() => {
+    if (!isActive) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      load();
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [isActive, load]);
 
   function resend(logId: string) {
     void busyRun(`resend:${logId}`, async () => {
       try {
         await api(`/api/runs/${id}/deliveries/${logId}/resend`, { method: "POST" });
         notify({ tone: "success", title: copy.resent });
+        load();
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function rerunCurrent() {
+    if (!run) return;
+    void busyRun("rerun", async () => {
+      try {
+        const created = await api<{ id: string; agent_name: string }>(`/api/runs/${run.id}/rerun`, { method: "POST" });
+        announceRun(created, run.agent_name);
+        navigate(`/runs/${created.id}`);
+      } catch (exc) {
+        announceError(exc);
+      }
+    });
+  }
+
+  function cancelCurrent() {
+    if (!run) return;
+    void busyRun("cancel", async () => {
+      try {
+        await api(`/api/runs/${run.id}/cancel`, { method: "POST" });
+        notify({ tone: "info", title: copy.cancelledRun });
         load();
       } catch (exc) {
         announceError(exc);
@@ -87,6 +138,7 @@ export function RunDetail() {
   if (error) return <div className="card">{error}</div>;
   if (!run) return <SkeletonRows />;
   const byName = new Map(run.steps.map((step) => [step.name, step]));
+  const currentStepKey = isActive ? PIPELINE.find(([key]) => !byName.has(key))?.[0] : undefined;
   const plan = run.steps.find((step) => step.name === "plan")?.detail || {};
   const sql = String(plan.sql || "");
   const codeStep = run.steps.find((step) => step.name === "code_execute");
@@ -99,7 +151,29 @@ export function RunDetail() {
           <h1>{run.agent_name}</h1>
           <p><Link to={`/agents/${run.agent_id}`}>Back to agent</Link> · {formatWhen(run.created_at)} → {formatWhen(run.finished_at)}</p>
         </div>
-        <Badge status={run.status} />
+        <div className="row">
+          <Badge status={run.status} />
+          {isActive && (
+            <ActionButton
+              className="btn-ghost"
+              busy={pending("cancel")}
+              disabled={!can("run:cancel")}
+              title={!can("run:cancel") ? copy.permissionDeniedHint : undefined}
+              onClick={cancelCurrent}
+            >
+              {copy.cancel}
+            </ActionButton>
+          )}
+          <ActionButton
+            className="btn-ghost"
+            busy={pending("rerun")}
+            disabled={!can("run:rerun")}
+            title={!can("run:rerun") ? copy.permissionDeniedHint : undefined}
+            onClick={rerunCurrent}
+          >
+            Rerun
+          </ActionButton>
+        </div>
       </div>
       {reason && <section className="card alert">{reason}</section>}
       {run.summary?.delivery_warning && (
@@ -115,7 +189,15 @@ export function RunDetail() {
           <div className="timeline">
             {PIPELINE.map(([key, label]) => {
               const step = byName.get(key);
-              const tone = !step ? "" : step.status === "succeeded" ? "ok" : step.status === "failed" ? "bad" : "warn";
+              const tone = !step
+                ? key === currentStepKey
+                  ? "warn"
+                  : ""
+                : step.status === "succeeded"
+                  ? "ok"
+                  : step.status === "failed"
+                    ? "bad"
+                    : "warn";
               const gap = ACTIVE.has(run.status)
                 ? <span className="badge">{copy.waiting}</span>
                 : <span className="badge muted" title={copy.stepDidNotRun}>{copy.skipped}</span>;
@@ -180,7 +262,15 @@ export function RunDetail() {
             {item.recipients.cc && item.recipients.cc.length > 0 ? ` · cc ${item.recipients.cc.join(", ")}` : ""}
             {" · "}{item.subject} · {formatWhen(item.created_at)}
             {item.error ? ` · ${presentText(item.error)}` : ""}
-            <ActionButton className="btn-ghost" busy={pending(`resend:${item.id}`)} onClick={() => resend(item.id)}>{copy.resend}</ActionButton>
+            <ActionButton
+              className="btn-ghost"
+              busy={pending(`resend:${item.id}`)}
+              disabled={!can("delivery:resend")}
+              title={!can("delivery:resend") ? copy.permissionDeniedHint : undefined}
+              onClick={() => resend(item.id)}
+            >
+              {copy.resend}
+            </ActionButton>
           </p>
         ))}
       </section>

@@ -3,9 +3,16 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from shared.config import get_settings
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
 
 
 class Base(DeclarativeBase):
@@ -19,7 +26,9 @@ _Session: sessionmaker[Session] | None = None
 def get_engine():
     global _engine, _Session
     if _engine is None:
-        _engine = create_engine(get_settings().database_url, pool_pre_ping=True, future=True)
+        url = get_settings().database_url
+        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _engine = create_engine(url, pool_pre_ping=True, future=True, connect_args=connect_args)
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
     return _engine
 
@@ -55,26 +64,51 @@ def init_db() -> None:
 
     with engine.begin() as conn:
         apply_migrations(conn)
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE OR REPLACE FUNCTION agentrt_forbid_audit_mutation() RETURNS trigger AS $$
-                BEGIN
-                  RAISE EXCEPTION 'audit_events is append-only';
-                END;
-                $$ LANGUAGE plpgsql
-                """
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE OR REPLACE FUNCTION agentrt_forbid_audit_mutation() RETURNS trigger AS $$
+                    BEGIN
+                      RAISE EXCEPTION 'audit_events is append-only';
+                    END;
+                    $$ LANGUAGE plpgsql
+                    """
+                )
             )
-        )
-        conn.execute(text("DROP TRIGGER IF EXISTS audit_events_no_update ON audit_events"))
-        conn.execute(
-            text(
-                """
-                CREATE TRIGGER audit_events_no_update
-                BEFORE UPDATE OR DELETE ON audit_events
-                FOR EACH ROW EXECUTE FUNCTION agentrt_forbid_audit_mutation()
-                """
+            conn.execute(text("DROP TRIGGER IF EXISTS audit_events_no_update ON audit_events"))
+            conn.execute(
+                text(
+                    """
+                    CREATE TRIGGER audit_events_no_update
+                    BEFORE UPDATE OR DELETE ON audit_events
+                    FOR EACH ROW EXECUTE FUNCTION agentrt_forbid_audit_mutation()
+                    """
+                )
             )
-        )
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_artifacts_created_at ON artifacts (created_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_artifacts_created_at ON artifacts (created_at)"))
+    elif engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS audit_events_no_update
+                    BEFORE UPDATE ON audit_events
+                    BEGIN
+                      SELECT RAISE(ABORT, 'audit_events is append-only');
+                    END
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
+                    BEFORE DELETE ON audit_events
+                    BEGIN
+                      SELECT RAISE(ABORT, 'audit_events is append-only');
+                    END
+                    """
+                )
+            )

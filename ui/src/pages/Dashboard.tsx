@@ -2,6 +2,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ChatStudio } from "../components/ChatStudio";
 import { Badge, DataTable, Empty, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
@@ -55,6 +56,7 @@ export function Dashboard() {
         </div>
         <Link className="btn" to="/agents/new">New agent</Link>
       </div>
+      <ChatStudio mode="hero" />
       <section className="grid-6">
         <Kpi label="Published agents" value={formatNumber(data.active_agents)} />
         <Kpi label="Runs today" value={formatNumber(data.runs_today)} />
@@ -87,15 +89,15 @@ export function Dashboard() {
               <AreaChart data={chart}>
                 <defs>
                   <linearGradient id="durationFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#a855f7" stopOpacity={0.55} />
-                    <stop offset="100%" stopColor="#a855f7" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.55} />
+                    <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" stroke="var(--muted)" />
                 <YAxis stroke="var(--muted)" />
                 <Tooltip />
-                <Area type="monotone" dataKey="avg_duration" stroke="#c084fc" fill="url(#durationFill)" name="Seconds" connectNulls strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey="avg_duration" stroke="var(--accent)" fill="url(#durationFill)" name="Seconds" connectNulls strokeWidth={2} dot={false} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -107,16 +109,30 @@ export function Dashboard() {
           {data.recent_runs.length === 0 ? <Empty title="No runs yet" body="Publish an agent and run it now." /> : <DataTable data={data.recent_runs} columns={columns} />}
         </article>
         <article className="card">
-          <h2>Up next</h2>
-          {upcoming.length === 0 && <Empty title="Nothing scheduled" body="Agents on a cron show their next run here." />}
-          {upcoming.map((agent) => (
-            <p key={agent.id}><Link to={`/agents/${agent.id}`}>{agent.name}</Link> · {agent.schedule?.cron || agent.schedule?.mode} · {formatWhen(agent.schedule?.next_run_at)}</p>
-          ))}
-          <h2>Alerts</h2>
-          {data.alerts.length === 0 && <Empty title="No open alerts" body="Failed runs and reviews appear here." />}
-          {data.alerts.map((alert) => (
-            <p key={alert.id}><Badge status={alert.status} /> <Link to={`/runs/${alert.id}`}>{alert.agent_name}</Link> — {presentText(alert.reason) || "No detail"}</p>
-          ))}
+          <div className="feed-section">
+            <div className="feed-head"><h2>Up next</h2><span className="feed-count">{upcoming.length}</span></div>
+            {upcoming.length === 0 && <Empty title="Nothing scheduled" body="Agents on a cron show their next run here." />}
+            <div className="feed-list">
+              {upcoming.map((agent) => (
+                <div className="feed-item next" key={agent.id}>
+                  <div className="feed-title"><Link to={`/agents/${agent.id}`}>{agent.name}</Link></div>
+                  <div className="feed-meta">{agent.schedule?.cron || agent.schedule?.mode} · {formatWhen(agent.schedule?.next_run_at)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="feed-section">
+            <div className="feed-head"><h2>Alerts</h2><span className="feed-count">{data.alerts.length}</span></div>
+            {data.alerts.length === 0 && <Empty title="No open alerts" body="Failed runs and reviews appear here." />}
+            <div className="feed-list">
+              {data.alerts.map((alert) => (
+                <div className="feed-item alert" key={alert.id}>
+                  <div className="feed-title"><Badge status={alert.status} /><Link to={`/runs/${alert.id}`}>{alert.agent_name}</Link></div>
+                  <div className="feed-meta">{presentText(alert.reason) || "No detail"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </article>
       </section>
     </>

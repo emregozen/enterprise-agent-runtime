@@ -46,6 +46,10 @@ def seed() -> None:
             log.exception("sample sales load failed")
     db = SessionLocal()
     try:
+        from control_plane.auth import ensure_default_group
+        from control_plane.migrate import DEFAULT_GROUP_ID
+
+        ensure_default_group(db)
         if settings.sales_database_url and db.query(DataSourceRecord).filter(DataSourceRecord.name == "postgres-sales").one_or_none() is None:
             db.add(
                 DataSourceRecord(
@@ -55,6 +59,7 @@ def seed() -> None:
                     dsn_env="SALES_DATABASE_URL",
                     allow_tables=["sales"],
                     sensitivity="internal",
+                    owner_group_id=DEFAULT_GROUP_ID,
                 )
             )
             db.commit()
@@ -63,7 +68,7 @@ def seed() -> None:
         seed_llm_from_env(db, settings)
         if settings.seed_demo and db.query(Agent).count() == 0:
             if db.query(DataSourceRecord).filter(DataSourceRecord.name == "postgres-sales").one_or_none():
-                create_agent(db, EXAMPLE_SPEC, publish=True, actor="seed")
+                create_agent(db, EXAMPLE_SPEC, publish=True, actor="seed", owner_group_id=DEFAULT_GROUP_ID)
                 log.info("seeded gunluk-satis-ozeti")
     finally:
         db.close()

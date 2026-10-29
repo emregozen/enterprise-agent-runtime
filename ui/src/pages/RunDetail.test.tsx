@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, vi } from "vitest";
 import { RunDetail } from "./RunDetail";
@@ -65,5 +65,30 @@ describe("Run pipeline", () => {
     expect(await screen.findAllByText("Waiting")).toHaveLength(7);
     expect(screen.queryByTitle("Did not run")).not.toBeInTheDocument();
     expect(screen.queryByText("Skipped")).not.toBeInTheDocument();
+  });
+
+  it("polls while running and updates live when the run finishes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let currentStatus = "running";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      const body = url.endsWith("/logs") ? { text: "step log" } : run(currentStatus);
+      return { ok: true, status: 200, json: async () => body, text: async () => "" };
+    }));
+    render(
+      <MemoryRouter initialEntries={["/runs/run-1"]}>
+        <Routes>
+          <Route path="/runs/:id" element={<RunDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findAllByText("Waiting")).toHaveLength(7);
+    currentStatus = "succeeded";
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(await screen.findAllByTitle("Did not run")).toHaveLength(7);
+    expect(screen.queryByText("Waiting")).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

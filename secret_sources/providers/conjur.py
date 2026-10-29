@@ -49,6 +49,8 @@ def fetch_variable(
     try:
         with client(verify=verify) as http:
             response = http.get(url, headers={"Authorization": f'Token token="{token}"'})
+            if response.status_code in {500, 502, 503, 504}:
+                response = http.get(url, headers={"Authorization": f'Token token="{token}"'})
     except httpx.HTTPError as exc:
         raise SecretProviderError(
             "Conjur sunucusuna ulaşılamadı. Adres, sertifika ve ağ politikasını kontrol edin."
@@ -106,8 +108,12 @@ def authenticate(
         with client(verify=verify) as http:
             if data is not None:
                 response = http.post(url, data=data, headers=headers)
+                if response.status_code in {500, 502, 503, 504}:
+                    response = http.post(url, data=data, headers=headers)
             else:
                 response = http.post(url, content=content, headers=headers)
+                if response.status_code in {500, 502, 503, 504}:
+                    response = http.post(url, content=content, headers=headers)
     except httpx.HTTPError as exc:
         raise SecretProviderError(
             "Conjur sunucusuna ulaşılamadı. Adres, sertifika ve ağ politikasını kontrol edin."

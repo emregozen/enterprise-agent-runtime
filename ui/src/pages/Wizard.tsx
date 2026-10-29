@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { DeliveryEditor, deliveryReady, draftsFromSpec, writeDelivery, type ChannelChoice, type DraftTarget } from "../components/DeliveryTargets";
+import { ChartDataToggle, chartDataOf, withChartData } from "../components/ChartDataToggle";
 import { Select } from "../components/Select";
 import { api, ApiError } from "../lib/api";
 import { copy } from "../lib/copy";
@@ -25,12 +26,18 @@ function draftError(exc: unknown): string {
 
 export function Wizard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const prefilledGoal = searchParams.get("goal");
+  const prefilledSource = searchParams.get("datasource");
   const [step, setStep] = useState(0);
-  const [description, setDescription] = useState("Each weekday morning, summarize yesterday's sales by region, explain the outliers, and email finance@company.example.");
+  const [description, setDescription] = useState(
+    prefilledGoal || "Each weekday morning, summarize yesterday's sales by region, explain the outliers, and email finance@company.example.",
+  );
   const [owner, setOwner] = useState("finance");
+  const [chartData, setChartData] = useState(false);
   const [sources, setSources] = useState<Source[]>([]);
   const [models, setModels] = useState<Model[]>([]);
-  const [sourceId, setSourceId] = useState("");
+  const [sourceId, setSourceId] = useState(prefilledSource || "");
   const [modelRef, setModelRef] = useState("");
   const [specText, setSpecText] = useState("");
   const [channels, setChannels] = useState<ChannelChoice[]>([]);
@@ -41,7 +48,8 @@ export function Wizard() {
   useEffect(() => {
     api<Source[]>("/api/datasources").then((rows) => {
       setSources(rows);
-      const preferred = rows.find((row) => row.dialect === "postgres") || rows[0];
+      const matched = prefilledSource ? rows.find((row) => row.id === prefilledSource || row.name === prefilledSource) : undefined;
+      const preferred = matched || rows.find((row) => row.dialect === "postgres") || rows[0];
       if (preferred) setSourceId(preferred.id);
     }).catch((exc: ApiError) => setError(exc.message));
     api<Model[]>("/api/llm/providers").then((rows) => {
@@ -60,8 +68,9 @@ export function Wizard() {
         method: "POST",
         body: JSON.stringify({ description, owner, datasource_refs: [sourceId], model_ref: modelRef || null }),
       });
-      setSpecText(JSON.stringify(draft.spec, null, 2));
-      setTargets(draftsFromSpec(draft.spec));
+      const drafted = chartData ? withChartData(draft.spec, true) : draft.spec;
+      setSpecText(JSON.stringify(drafted, null, 2));
+      setTargets(draftsFromSpec(drafted));
       setStep(2);
     } catch (exc) {
       const message = draftError(exc);
@@ -162,6 +171,7 @@ export function Wizard() {
           <div className="grid-2">
             <label className="field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} /></label>
             <label className="field" style={{ gridColumn: "1 / -1" }}>What should it do?<textarea rows={5} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+            <div style={{ gridColumn: "1 / -1" }}><ChartDataToggle checked={chartData} onChange={setChartData} /></div>
           </div>
         )}
         {step === 1 && (
@@ -190,9 +200,15 @@ export function Wizard() {
           </div>
         )}
         {step === 2 && (
-          <label className="field">Generated spec
-            <textarea rows={16} value={specText} onChange={(event) => setSpecText(event.target.value)} spellCheck={false} />
-          </label>
+          <div>
+            <ChartDataToggle
+              checked={chartDataOf(parsed)}
+              onChange={(value) => { const body = spec(); if (body) { setChartData(value); setSpecText(JSON.stringify(withChartData(body, value), null, 2)); setError(""); } }}
+            />
+            <label className="field">Generated spec
+              <textarea rows={16} value={specText} onChange={(event) => setSpecText(event.target.value)} spellCheck={false} />
+            </label>
+          </div>
         )}
         {step === 3 && (
           <div>

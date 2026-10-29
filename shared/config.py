@@ -93,6 +93,54 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     migrate_on_start: bool = True
 
+    # Auth & OIDC settings. auth_mode=disabled is for local/unit-test use only; Helm defaults to oidc.
+    auth_mode: str = "disabled"
+    oidc_issuer_url: str = ""
+    oidc_public_issuer_url: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_k8s_secret_name: str = ""
+    oidc_k8s_secret_key: str = "client_secret"
+    oidc_scopes: str = "openid profile email"
+    oidc_email_claim: str = "email"
+    oidc_name_claim: str = "name"
+    oidc_groups_claim: str = "groups"
+    oidc_group_mapping_enabled: bool = False
+    oidc_group_mapping: str = ""
+    oidc_ca_bundle: str = ""
+    oidc_verify_tls: bool = True
+    auth_bootstrap_admins: str = ""
+    auth_session_ttl_seconds: int = 28800
+    auth_cookie_secure: bool = False
+
+    def bootstrap_admin_emails(self) -> set[str]:
+        return {
+            part.strip().lower()
+            for part in (self.auth_bootstrap_admins or "").split(",")
+            if part.strip()
+        }
+
+    def parsed_group_mapping(self) -> dict[str, dict]:
+        raw = (self.oidc_group_mapping or "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        result: dict[str, dict] = {}
+        for claim_val, target in data.items():
+            if isinstance(target, str):
+                result[str(claim_val)] = {"group": target.strip(), "role": "viewer"}
+            elif isinstance(target, dict) and target.get("group"):
+                result[str(claim_val)] = {
+                    "group": str(target["group"]).strip(),
+                    "role": str(target.get("role") or "viewer").strip(),
+                }
+        return result
+
     def model_class_map(self) -> dict:
         raw = (self.llm_model_classes or "").strip()
         if not raw:

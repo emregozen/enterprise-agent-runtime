@@ -4,6 +4,7 @@ import { Select } from "../components/Select";
 import { EMPTY_SECRET_SOURCE, SecretSourceFields, secretSourceFromRow, type SecretSource } from "../components/SecretSourceFields";
 import { ActionButton, Badge, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { announceError, notify } from "../lib/notify";
@@ -48,6 +49,7 @@ export function Models() {
   const [providers, setProviders] = useState<SecretProvider[]>([]);
   const [pendingDelete, setPendingDelete] = useState<Provider | null>(null);
   const { run, pending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Provider[]>("/api/llm/providers").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -125,9 +127,33 @@ export function Models() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
-          <button className="btn-ghost" type="button" onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, name: row.original.name, base_url: row.original.base_url, model: row.original.model, api_key: "", temperature: row.original.temperature === null ? "" : String(row.original.temperature), reasoning_effort: row.original.reasoning_effort, is_default: row.original.is_default, ...secretSourceFromRow(row.original) }); }}>{copy.edit}</button>
-          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending(`test:${row.original.id}`)}
+            disabled={!can("llm_provider:test")}
+            title={!can("llm_provider:test") ? copy.permissionDeniedHint : undefined}
+            onClick={() => test(row.original.id)}
+          >
+            {copy.test}
+          </ActionButton>
+          <button
+            className="btn-ghost"
+            type="button"
+            disabled={!can("llm_provider:write")}
+            title={!can("llm_provider:write") ? copy.permissionDeniedHint : undefined}
+            onClick={() => { setEditing(row.original.id); setForm({ ...EMPTY, name: row.original.name, base_url: row.original.base_url, model: row.original.model, api_key: "", temperature: row.original.temperature === null ? "" : String(row.original.temperature), reasoning_effort: row.original.reasoning_effort, is_default: row.original.is_default, ...secretSourceFromRow(row.original) }); }}
+          >
+            {copy.edit}
+          </button>
+          <button
+            className="btn-danger"
+            type="button"
+            disabled={!can("llm_provider:delete")}
+            title={!can("llm_provider:delete") ? copy.permissionDeniedHint : undefined}
+            onClick={() => setPendingDelete(row.original)}
+          >
+            {copy.delete}
+          </button>
         </span>
       ),
     },
@@ -143,7 +169,15 @@ export function Models() {
           <h1>LLM providers</h1>
           <p>OpenAI-compatible endpoints. The key can stay encrypted on the platform, or point at a Kubernetes Secret or a CyberArk record. Leave reasoning empty to turn it off.</p>
         </div>
-        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New model</button>
+        <button
+          className="btn"
+          type="button"
+          disabled={!can("llm_provider:write")}
+          title={!can("llm_provider:write") ? copy.permissionDeniedHint : undefined}
+          onClick={() => { setEditing(null); setForm(EMPTY); }}
+        >
+          New model
+        </button>
       </div>
       <section className="card">
         {rows.length === 0 ? <Empty title="No models" body="Add DeepSeek or another OpenAI-compatible endpoint. Simulated mode does not wait on this list." action={<button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New model</button>} /> : <DataTable data={rows} columns={columns} />}

@@ -119,6 +119,49 @@ otel:
   endpoint: ""
   serviceName: agent-runtime
 
+auth:
+  # oidc | disabled. Cluster deployments default to oidc; local dev defaults to disabled.
+  mode: oidc
+  bootstrapAdmins: ""
+  sessionTtlSeconds: 28800
+  cookieSecure: false
+  oidc:
+    issuerUrl: ""
+    publicIssuerUrl: ""
+    clientId: agent-runtime
+    clientSecret: ""
+    existingSecret:
+      name: ""
+      key: client_secret
+    scopes: "openid profile email"
+    emailClaim: email
+    nameClaim: name
+    groupsClaim: groups
+    groupMappingEnabled: false
+    groupMapping: ""
+    caBundle: ""
+    verifyTls: true
+
+# Optional Keycloak identity provider for CRC / test clusters. Off by default.
+keycloak:
+  enabled: false
+  image: quay.io/keycloak/keycloak:26.0.5
+  httpPort: 8080
+  hostname: ""
+  adminUser: admin
+  adminPassword: admin-change-me
+  realm: agent-runtime
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  route:
+    enabled: false
+    host: ""
+
 # Optional SMTP catcher for CRC. Off by default. The control plane sends; run pods do not.
 # Enable with mailpit.enabled and, to open the inbox, mailpit.route.enabled.
 mailpit:

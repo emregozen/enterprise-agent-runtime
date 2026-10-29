@@ -1,0 +1,270 @@
+{{- if .Values.keycloak.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin
+  namespace: {{ .Values.namespace }}
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN: {{ .Values.keycloak.adminUser | quote }}
+  KEYCLOAK_ADMIN_PASSWORD: {{ .Values.keycloak.adminPassword | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: {{ .Values.namespace }}
+data:
+  realm-export.json: |
+    {
+      "realm": {{ .Values.keycloak.realm | quote }},
+      "enabled": true,
+      "clients": [
+        {
+          "clientId": {{ .Values.auth.oidc.clientId | quote }},
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": {{ (.Values.auth.oidc.clientSecret | default "agent-runtime-dev-secret") | quote }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "redirectUris": ["*"],
+          "webOrigins": ["*"],
+          "attributes": {
+            "pkce.code.challenge.method": "S256"
+          }
+        }
+      ],
+      "users": [
+        {
+          "username": "emre",
+          "email": "emre@company.example",
+          "firstName": "Emre",
+          "lastName": "Gozen",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "emre123", "temporary": false }]
+        },
+        {
+          "username": "admin",
+          "email": "admin@company.example",
+          "firstName": "Platform",
+          "lastName": "Admin",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "admin123", "temporary": false }]
+        },
+        {
+          "username": "editor-a",
+          "email": "editor-a@company.example",
+          "firstName": "Editor",
+          "lastName": "GroupA",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "editor123", "temporary": false }]
+        },
+        {
+          "username": "operator-a",
+          "email": "operator-a@company.example",
+          "firstName": "Operator",
+          "lastName": "GroupA",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "operator123", "temporary": false }]
+        },
+        {
+          "username": "viewer-a",
+          "email": "viewer-a@company.example",
+          "firstName": "Viewer",
+          "lastName": "GroupA",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "viewer123", "temporary": false }]
+        },
+        {
+          "username": "editor-b",
+          "email": "editor-b@company.example",
+          "firstName": "Editor",
+          "lastName": "GroupB",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "editor123", "temporary": false }]
+        },
+        {
+          "username": "pending",
+          "email": "pending@company.example",
+          "firstName": "Waiting",
+          "lastName": "User",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [{ "type": "password", "value": "pending123", "temporary": false }]
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+      {{- include "agent-runtime.podAnnotations" (dict "root" . "container" "keycloak" "image" .Values.keycloak.image) | nindent 6 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: keycloak
+          image: {{ .Values.keycloak.image | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          args:
+            - start-dev
+            - --import-realm
+            - --http-port={{ .Values.keycloak.httpPort }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.keycloak.httpPort }}
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            {{- if .Values.keycloak.hostname }}
+            - name: KC_HOSTNAME
+              value: {{ .Values.keycloak.hostname | quote }}
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            {{- end }}
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: JDK_JAVA_OPTIONS
+              value: "-XX:UseSVE=0"
+            - name: JAVA_OPTS_APPEND
+              value: "-XX:UseSVE=0 -Xms128m -Xmx512m"
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          startupProbe:
+            httpGet:
+              path: /realms/{{ .Values.keycloak.realm }}
+              port: http
+            failureThreshold: 36
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /realms/{{ .Values.keycloak.realm }}
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: {{ .Values.keycloak.resources.requests.cpu | quote }}
+              memory: {{ .Values.keycloak.resources.requests.memory | quote }}
+            limits:
+              cpu: {{ .Values.keycloak.resources.limits.cpu | quote }}
+              memory: {{ .Values.keycloak.resources.limits.memory | quote }}
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+            - name: data
+              mountPath: /opt/keycloak/data/h2
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.httpPort }}
+      targetPort: http
+{{- if .Values.keycloak.route.enabled }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: keycloak
+  namespace: {{ .Values.namespace }}
+spec:
+  {{- if .Values.keycloak.route.host }}
+  host: {{ .Values.keycloak.route.host | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: keycloak
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak
+  namespace: {{ .Values.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.keycloak.httpPort }}
+{{- end }}
+{{- end }}

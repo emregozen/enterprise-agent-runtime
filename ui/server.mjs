@@ -15,6 +15,7 @@ const types = {
   ".json": "application/json",
   ".woff2": "font/woff2",
   ".png": "image/png",
+  ".ico": "image/x-icon",
 };
 
 function sendFile(res, file) {
@@ -32,9 +33,10 @@ function sendFile(res, file) {
       return;
     }
     const ext = path.extname(file);
+    const isIcon = ext === ".ico" || ext === ".svg" || file.includes("icon");
     res.writeHead(200, {
       "Content-Type": types[ext] || "application/octet-stream",
-      "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable",
+      "Cache-Control": ext === ".html" || isIcon ? "no-cache" : "public, max-age=31536000, immutable",
     });
     res.end(data);
   });
@@ -43,7 +45,13 @@ function sendFile(res, file) {
 function proxy(req, res) {
   const target = new URL(req.url.replace(/^\/backend/, "") || "/", upstream);
   const library = target.protocol === "https:" ? https : http;
-  const headers = { ...req.headers, host: target.host };
+  const forwardedHost = req.headers["x-forwarded-host"] || req.headers.host || "";
+  const headers = {
+    ...req.headers,
+    host: target.host,
+    "x-forwarded-host": forwardedHost,
+    "x-forwarded-prefix": "/backend",
+  };
   delete headers["accept-encoding"];
   const upstreamReq = library.request(
     target,

@@ -1,12 +1,17 @@
-import { Bot, Database, KeyRound, LayoutDashboard, Mail, Moon, Play, Search, Settings, Sparkles, Sun } from "lucide-react";
+import { Bot, LayoutGrid, Database, KeyRound, LayoutDashboard, LogOut, Mail, MessageSquare, Moon, Play, Settings, Shield, Sparkles, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { Toaster } from "./Toaster";
+import { SkeletonRows } from "./ui";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { copy } from "../lib/copy";
+import { LoginPage } from "../pages/LoginPage";
 
 const LINKS = [
   { to: "/", label: copy.navOverview, icon: LayoutDashboard, end: true, group: "operate" },
+  { to: "/chat", label: copy.navChat, icon: MessageSquare, group: "operate" },
+  { to: "/boards", label: "Boards", icon: LayoutGrid, group: "operate" },
   { to: "/agents", label: copy.navAgents, icon: Bot, group: "operate" },
   { to: "/runs", label: copy.navRuns, icon: Play, group: "operate" },
   { to: "/datasources", label: copy.navSources, icon: Database, group: "configure" },
@@ -18,6 +23,8 @@ const LINKS = [
 
 const CRUMBS: Record<string, string> = {
   "/": copy.navOverview,
+  "/chat": copy.navChat,
+  "/boards": "Boards",
   "/agents": copy.navAgents,
   "/agents/new": copy.navNewAgent,
   "/runs": copy.navRuns,
@@ -26,17 +33,26 @@ const CRUMBS: Record<string, string> = {
   "/secrets": copy.navSecrets,
   "/delivery": copy.navDelivery,
   "/settings": copy.navSettings,
+  "/admin": copy.navAdmin,
 };
 
 export function Shell() {
+  const { me, loading, switchGroup, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [mode, setMode] = useState("…");
   const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
   const [palette, setPalette] = useState(() => new URLSearchParams(location.search).get("palette") === "1");
+  const isBlockedOidc =
+    me.auth_mode === "oidc" &&
+    (!me.authenticated ||
+      !me.user ||
+      me.user.status !== "active" ||
+      (!me.user.is_admin && me.groups.length === 0));
   useEffect(() => {
+    if (loading || isBlockedOidc) return;
     api<{ llm_mode: string }>("/api/settings").then((body) => setMode(body.llm_mode)).catch(() => setMode(copy.offline));
-  }, []);
+  }, [loading, isBlockedOidc]);
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -54,12 +70,27 @@ export function Shell() {
     document.documentElement.classList.toggle("dark", next);
     localStorage.setItem("theme", next ? "dark" : "light");
   }
+  if (loading) {
+    return (
+      <div className="content" style={{ padding: 32 }}>
+        <SkeletonRows />
+      </div>
+    );
+  }
+  if (isBlockedOidc) {
+    return (
+      <>
+        <LoginPage />
+        <Toaster />
+      </>
+    );
+  }
   const modelLabel = mode === "fake" ? copy.fakeModel : mode === "openai" ? copy.liveModel : mode;
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <NavLink className="brand" to="/">
-          <span className="mark" aria-hidden>A</span>
+          <span className="mark" aria-hidden />
           <span>
             <span>Control plane</span>
             <strong>Agent Runtime</strong>
@@ -80,6 +111,12 @@ export function Shell() {
               {link.label}
             </NavLink>
           ))}
+          {me.user?.is_admin && (
+            <NavLink to="/admin" className={({ isActive }) => (isActive ? "active" : "")}>
+              <Shield size={16} aria-hidden />
+              {copy.navAdmin}
+            </NavLink>
+          )}
         </nav>
         <div className="sidebar-foot">
           <span className="badge info">{modelLabel}</span>
@@ -89,17 +126,37 @@ export function Shell() {
         <header className="topbar">
           <div className="crumbs">{copy.console} / <b>{crumb}</b></div>
           <div className="row">
-            <button className="cmdk-trigger" type="button" onClick={() => setPalette(true)}>
-              <span className="row"><Search size={14} aria-hidden /> {copy.search}</span>
-              <kbd>⌘K</kbd>
-            </button>
+            {me.groups.length > 0 && (
+              <select
+                aria-label={copy.activeGroup}
+                value={me.active_group_id || me.groups[0]?.id || ""}
+                onChange={(event) => void switchGroup(event.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8 }}
+              >
+                {me.groups.map((grp) => (
+                  <option key={grp.id} value={grp.id}>
+                    {grp.name} ({grp.role})
+                  </option>
+                ))}
+              </select>
+            )}
+            {me.user && (
+              <span className="badge" title={me.user.email}>
+                {me.user.display_name || me.user.email}
+              </span>
+            )}
             <button className="btn-ghost icon-btn" type="button" aria-label={dark ? copy.themeToLight : copy.themeToDark} onClick={toggleTheme}>
               {dark ? <Sun size={16} /> : <Moon size={16} />}
             </button>
+            {me.auth_mode === "oidc" && (
+              <button className="btn-ghost icon-btn" type="button" aria-label={copy.signOut} title={copy.signOut} onClick={() => void logout()}>
+                <LogOut size={16} />
+              </button>
+            )}
           </div>
         </header>
         <main className="content">
-          <Outlet />
+          <Outlet key={me.active_group_id || "default"} />
         </main>
       </div>
       {palette && <CommandPalette onClose={() => setPalette(false)} onPick={(path) => { setPalette(false); navigate(path); }} onTheme={toggleTheme} dark={dark} />}

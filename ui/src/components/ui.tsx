@@ -191,6 +191,7 @@ export function ActionButton({
   children,
   onClick,
   disabled = false,
+  title,
   busyLabel = copy.working,
 }: {
   busy?: boolean;
@@ -198,10 +199,11 @@ export function ActionButton({
   children: ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  title?: string;
   busyLabel?: string;
 }) {
   return (
-    <button className={className} type="button" disabled={disabled || busy} aria-busy={busy || undefined} onClick={onClick}>
+    <button className={className} type="button" disabled={disabled || busy} title={title} aria-busy={busy || undefined} onClick={onClick}>
       {busy && <span className="spinner" aria-hidden />}
       {busy ? busyLabel : children}
     </button>

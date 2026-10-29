@@ -16,15 +16,24 @@ from control_plane.policy import local_day_start
 from shared.crypto import decrypt_secret, encrypt_secret, public_hint, redact, secret_hint
 
 
-def find_datasource(db: Session, ref: str) -> DataSourceRecord | None:
+def find_datasource(
+    db: Session,
+    ref: str,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> DataSourceRecord | None:
     row = db.query(DataSourceRecord).filter(DataSourceRecord.name == ref).one_or_none()
-    if row is not None:
-        return row
-    try:
-        key = uuid.UUID(str(ref))
-    except ValueError:
+    if row is None:
+        try:
+            key = uuid.UUID(str(ref))
+        except ValueError:
+            return None
+        row = db.get(DataSourceRecord, key)
+    if row is None:
         return None
-    return db.get(DataSourceRecord, key)
+    if allowed_group_ids is not None and row.owner_group_id not in allowed_group_ids:
+        return None
+    return row
 
 
 def _dsn_env_for(name: str) -> str:
@@ -82,6 +91,8 @@ def datasource_out(row: DataSourceRecord) -> dict:
         "options": row.options or {},
         "read_only": bool(row.read_only),
         "configured": configured,
+        "owner_group_id": str(row.owner_group_id) if getattr(row, "owner_group_id", None) else None,
+        "created_by": str(row.created_by) if getattr(row, "created_by", None) else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -178,7 +189,7 @@ def _assign_secret_source(db: Session, row, body, *, kind: str) -> None:
         row.k8s_secret_name = name
         row.k8s_secret_key = key
         return
-    provider = _provider_or_error(db, body.secret_provider_id, backend)
+    provider = _provider_or_error(db, body.secret_provider_id, backend, owner_group_id=getattr(row, "owner_group_id", None))
     row.secret_provider_id = provider.id
     if backend == "conjur":
         path = (body.secret_path or "").strip()
@@ -200,7 +211,7 @@ def _assign_secret_source(db: Session, row, body, *, kind: str) -> None:
     }
 
 
-def _provider_or_error(db: Session, provider_id, kind: str):
+def _provider_or_error(db: Session, provider_id, kind: str, *, owner_group_id: uuid.UUID | None = None):
     from control_plane.models import SecretProvider
     from control_plane.service import ServiceError
 
@@ -212,6 +223,8 @@ def _provider_or_error(db: Session, provider_id, kind: str):
         raise ServiceError("gizli bilgi kaynağı yok", 400) from exc
     provider = db.get(SecretProvider, key)
     if provider is None:
+        raise ServiceError("gizli bilgi kaynağı yok", 400)
+    if owner_group_id is not None and provider.owner_group_id is not None and provider.owner_group_id != owner_group_id:
         raise ServiceError("gizli bilgi kaynağı yok", 400)
     if provider.kind != kind:
         raise ServiceError("seçilen kaynak bu parola türü ile uyuşmuyor", 400)
@@ -445,6 +458,8 @@ def provider_out(row: LlmProvider) -> dict:
         "extra_params": row.extra_params or {},
         "is_default": row.is_default,
         "enabled": row.enabled,
+        "owner_group_id": str(row.owner_group_id) if getattr(row, "owner_group_id", None) else None,
+        "created_by": str(row.created_by) if getattr(row, "created_by", None) else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
@@ -467,16 +482,31 @@ def apply_provider(db: Session, row: LlmProvider, body, *, creating: bool, reset
             row.api_key_ciphertext = encrypt_secret(body.api_key)
             row.api_key_hint = secret_hint(body.api_key)
     if body.is_default:
-        db.query(LlmProvider).filter(LlmProvider.id != row.id).update({LlmProvider.is_default: False})
+        q = db.query(LlmProvider).filter(LlmProvider.id != row.id)
+        if getattr(row, "owner_group_id", None) is not None:
+            q = q.filter(LlmProvider.owner_group_id == row.owner_group_id)
+        q.update({LlmProvider.is_default: False})
         row.is_default = True
     elif creating:
         row.is_default = False
 
 
-def find_provider(db: Session, ref: str | None) -> LlmProvider | None:
+def find_provider(
+    db: Session,
+    ref: str | None,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> LlmProvider | None:
+    def _group_ok(item: LlmProvider | None) -> bool:
+        if item is None:
+            return False
+        if allowed_group_ids is not None and item.owner_group_id not in allowed_group_ids:
+            return False
+        return True
+
     if ref:
         row = db.query(LlmProvider).filter(LlmProvider.name == ref, LlmProvider.enabled.is_(True)).one_or_none()
-        if row is not None:
+        if row is not None and _group_ok(row):
             return row
         try:
             key = uuid.UUID(str(ref))
@@ -484,16 +514,23 @@ def find_provider(db: Session, ref: str | None) -> LlmProvider | None:
             key = None
         if key is not None:
             found = db.get(LlmProvider, key)
-            if found is not None and found.enabled:
+            if found is not None and found.enabled and _group_ok(found):
                 return found
-    return (
-        db.query(LlmProvider)
-        .filter(LlmProvider.enabled.is_(True), LlmProvider.is_default.is_(True))
-        .one_or_none()
-    )
+    q = db.query(LlmProvider).filter(LlmProvider.enabled.is_(True), LlmProvider.is_default.is_(True))
+    if allowed_group_ids is not None:
+        if not allowed_group_ids:
+            return None
+        q = q.filter(LlmProvider.owner_group_id.in_(list(allowed_group_ids)))
+    return q.first()
 
 
-def resolve_llm(db: Session, settings, model_class: str | None) -> dict:
+def resolve_llm(
+    db: Session,
+    settings,
+    model_class: str | None,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> dict:
     """Resolve a model for a run. The API key stays in this dict and must not be logged."""
     fallback = settings.resolve_model(model_class or "local-default")
     base = {
@@ -508,7 +545,7 @@ def resolve_llm(db: Session, settings, model_class: str | None) -> dict:
     }
     if settings.llm_mode == "fake":
         return base
-    provider = find_provider(db, model_class)
+    provider = find_provider(db, model_class, allowed_group_ids=allowed_group_ids)
     if provider is None:
         return base
     from control_plane.service import ServiceError
@@ -597,12 +634,16 @@ def seed_llm_from_env(db: Session, settings) -> None:
         return
     if not (settings.llm_base_url and settings.llm_model):
         return
+    from control_plane.auth import ensure_default_group
+
+    default_group = ensure_default_group(db)
     row = LlmProvider(
         name=(settings.llm_model or "default")[:63],
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         is_default=True,
         enabled=True,
+        owner_group_id=default_group.id,
         k8s_secret_name=settings.llm_k8s_secret_name or None,
         k8s_secret_key=settings.llm_k8s_secret_key or "api_key",
         reasoning_effort=settings.llm_reasoning_effort or "",
@@ -616,13 +657,22 @@ def seed_llm_from_env(db: Session, settings) -> None:
     db.commit()
 
 
-def persist_llm_calls(db: Session, run: Run | None, calls: list, purpose: str) -> None:
+def persist_llm_calls(
+    db: Session,
+    run: Run | None,
+    calls: list,
+    purpose: str,
+    *,
+    owner_group_id: uuid.UUID | None = None,
+) -> None:
+    group_id = owner_group_id or (run.owner_group_id if run is not None else None)
     for item in calls or []:
         if not isinstance(item, dict):
             continue
         db.add(
             LlmCall(
                 run_id=run.id if run is not None else None,
+                owner_group_id=group_id,
                 provider_name=str(item.get("provider") or "")[:63],
                 model=str(item.get("model") or "")[:120],
                 purpose=purpose[:32],
@@ -648,7 +698,15 @@ def spec_diff(db: Session, agent: Agent, left: int, right: int) -> str:
     return "".join(difflib.unified_diff(before, after, fromfile=f"v{left}", tofile=f"v{right}"))
 
 
-def duplicate_agent(db: Session, agent: Agent, actor: str) -> Agent:
+def duplicate_agent(
+    db: Session,
+    agent: Agent,
+    actor: str,
+    *,
+    owner_group_id: uuid.UUID | None = None,
+    created_by: uuid.UUID | None = None,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> Agent:
     from control_plane.service import ServiceError, audit, create_agent
 
     current = (
@@ -662,7 +720,15 @@ def duplicate_agent(db: Session, agent: Agent, actor: str) -> Agent:
         raise ServiceError("kopyalanacak spec yok", 409)
     spec = json.loads(json.dumps(current.spec))
     spec["metadata"]["name"] = f"{agent.name}-kopya"[:55]
-    created = create_agent(db, spec, publish=True, actor=actor)
+    created = create_agent(
+        db,
+        spec,
+        publish=True,
+        actor=actor,
+        owner_group_id=owner_group_id or agent.owner_group_id,
+        created_by=created_by,
+        allowed_group_ids=allowed_group_ids,
+    )
     schedule = db.query(Schedule).filter(Schedule.agent_id == created.id).one_or_none()
     if schedule is not None:
         schedule.paused = True
@@ -733,7 +799,14 @@ def delete_run(db: Session, run: Run, actor: str) -> None:
     db.commit()
 
 
-def bulk_delete_runs(db: Session, *, older_than_days: int, statuses: list[str], actor: str) -> int:
+def bulk_delete_runs(
+    db: Session,
+    *,
+    older_than_days: int,
+    statuses: list[str],
+    actor: str,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> int:
     from control_plane.service import ServiceError
 
     if older_than_days < 1:
@@ -743,33 +816,53 @@ def bulk_delete_runs(db: Session, *, older_than_days: int, statuses: list[str], 
     if not chosen:
         raise ServiceError("silinecek durum seçilmedi", 400)
     cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
-    rows = (
-        db.query(Run)
-        .filter(Run.created_at < cutoff, Run.status.in_(chosen))
-        .all()
-    )
+    query = db.query(Run).filter(Run.created_at < cutoff, Run.status.in_(chosen))
+    if allowed_group_ids is not None:
+        if not allowed_group_ids:
+            return 0
+        query = query.filter(Run.owner_group_id.in_(list(allowed_group_ids)))
+    rows = query.all()
     for row in rows:
         delete_run(db, row, actor)
     return len(rows)
 
 
-def rerun(db: Session, run: Run, actor: str) -> tuple[Run, str]:
+def rerun(
+    db: Session,
+    run: Run,
+    actor: str,
+    *,
+    created_by: uuid.UUID | None = None,
+) -> tuple[Run, str]:
     from control_plane.service import ServiceError, trigger_run
 
     agent = db.get(Agent, run.agent_id)
     if agent is None or agent.status == "deleted":
         raise ServiceError("ajan yok", 404)
-    return trigger_run(db, agent, trigger="manual", dry_run=run.dry_run, actor=actor)
+    return trigger_run(db, agent, trigger="manual", dry_run=run.dry_run, actor=actor, created_by=created_by)
 
 
-def dashboard(db: Session, days: int = 14) -> dict:
+def dashboard(
+    db: Session,
+    days: int = 14,
+    *,
+    allowed_group_ids: set[uuid.UUID] | None = None,
+) -> dict:
     days = max(1, min(days, 90))
     now = datetime.now(timezone.utc)
     today = local_day_start(now, "Europe/Istanbul")
     window = now - timedelta(days=days)
-    active_agents = db.query(Agent).filter(Agent.status == "published").count()
-    runs_today_rows = db.query(Run).filter(Run.created_at >= today, Run.dry_run.is_(False)).all()
-    recent = db.query(Run).filter(Run.created_at >= window, Run.dry_run.is_(False)).all()
+
+    def _scope(query, model):
+        if allowed_group_ids is None:
+            return query
+        if not allowed_group_ids:
+            return query.filter(False)
+        return query.filter(model.owner_group_id.in_(list(allowed_group_ids)))
+
+    active_agents = _scope(db.query(Agent).filter(Agent.status == "published"), Agent).count()
+    runs_today_rows = _scope(db.query(Run).filter(Run.created_at >= today, Run.dry_run.is_(False)), Run).all()
+    recent = _scope(db.query(Run).filter(Run.created_at >= window, Run.dry_run.is_(False)), Run).all()
     finished = [row for row in recent if row.status in {"succeeded", "failed", "needs_review"}]
     succeeded = [row for row in finished if row.status == "succeeded"]
     success_rate = round(100 * len(succeeded) / len(finished), 1) if finished else None
@@ -778,8 +871,8 @@ def dashboard(db: Session, days: int = 14) -> dict:
         if row.started_at and row.finished_at:
             durations.append((row.finished_at - row.started_at).total_seconds())
     avg_duration = round(sum(durations) / len(durations), 1) if durations else None
-    needs_review = db.query(Run).filter(Run.status == "needs_review").count()
-    token_rows = db.query(LlmCall).filter(LlmCall.created_at >= today).all()
+    needs_review = _scope(db.query(Run).filter(Run.status == "needs_review"), Run).count()
+    token_rows = _scope(db.query(LlmCall).filter(LlmCall.created_at >= today), LlmCall).all()
     tokens_today = sum(row.total_tokens or 0 for row in token_rows)
     by_day: dict[str, dict[str, int]] = {}
     duration_by_day: dict[str, list[float]] = {}
@@ -806,10 +899,9 @@ def dashboard(db: Session, days: int = 14) -> dict:
                 "avg_duration": round(sum(samples) / len(samples), 1) if samples else None,
             }
         )
-    latest = db.query(Run).order_by(Run.created_at.desc()).limit(8).all()
+    latest = _scope(db.query(Run), Run).order_by(Run.created_at.desc()).limit(8).all()
     alerts = (
-        db.query(Run)
-        .filter(Run.status.in_(["needs_review", "failed"]))
+        _scope(db.query(Run).filter(Run.status.in_(["needs_review", "failed"])), Run)
         .order_by(Run.created_at.desc())
         .limit(6)
         .all()
@@ -849,6 +941,7 @@ def public_settings(settings) -> dict:
         "llm_mode": settings.llm_mode,
         "artifact_store": settings.resolved_artifact_store(),
         "run_backend": settings.run_backend,
+        "auth_mode": (settings.auth_mode or "disabled").strip().lower(),
         "encryption_configured": bool((settings.config_master_key or "").strip()),
         "egress": {
             "mode": "networkpolicy",

@@ -42,6 +42,10 @@ class FakeLLM:
         role = payload.get("role")
         if role == "builder":
             return json.dumps(self._build(payload), ensure_ascii=False)
+        if role == "chat_sql":
+            return json.dumps(self._chat_sql(payload), ensure_ascii=False)
+        if role == "chat_answer":
+            return json.dumps(self._chat_answer(payload), ensure_ascii=False)
         bad = False
         if payload.get("repair") is None and self._bad_left > 0:
             self._bad_left -= 1
@@ -167,6 +171,113 @@ class FakeLLM:
             if notify
             else None,
             "schedule_next": schedule_next,
+        }
+
+    def _chat_sql(self, payload: dict) -> dict:
+        question = str(payload.get("question") or "").strip()
+        if question.startswith("__inject_sql__:"):
+            return {
+                "title": "Injected SQL test",
+                "reasoning": "Testing SQL guard",
+                "sql": question.split("__inject_sql__:", 1)[1].strip(),
+            }
+        catalog = payload.get("catalog") or {}
+        dialect = (payload.get("dialect") or "postgres").lower()
+        table, columns = _pick_table(catalog)
+        if not table or not columns:
+            raise RuntimeError("veri kaynağında tablo bulunamadı")
+        table_sql = _ident(table)
+        date_col = _pick(columns, _DATE_NAMES)
+        measure = _pick(columns, _MEASURE_NAMES)
+        dimension = _pick(columns, _DIM_NAMES) or (columns[0] if columns else None)
+        folded = _fold(question)
+        if date_col and any(w in folded for w in ("daily", "trend", "date", "gunluk", "tarih", "time")):
+            d_sql = _ident(date_col)
+            if measure:
+                m_sql = _ident(measure)
+                if dialect == "oracle":
+                    agg = f"CAST(SUM({m_sql}) AS BINARY_DOUBLE)"
+                elif dialect in {"postgres", "postgresql"}:
+                    agg = f"ROUND(SUM({m_sql})::numeric, 2)"
+                else:
+                    agg = f"ROUND(SUM({m_sql}), 2)"
+                sql = (
+                    f"SELECT {d_sql} AS period, {agg} AS total_amount, COUNT(*) AS record_count "
+                    f"FROM {table_sql} GROUP BY {d_sql} ORDER BY {d_sql} DESC "
+                    + ("FETCH FIRST 30 ROWS ONLY" if dialect == "oracle" else "LIMIT 30")
+                )
+            else:
+                sql = f"SELECT {d_sql} AS period, COUNT(*) AS record_count FROM {table_sql} GROUP BY {d_sql} ORDER BY {d_sql} DESC " + (
+                    "FETCH FIRST 30 ROWS ONLY" if dialect == "oracle" else "LIMIT 30"
+                )
+        elif dimension and measure:
+            dim_sql = _ident(dimension)
+            m_sql = _ident(measure)
+            if dialect == "oracle":
+                sql = (
+                    f"SELECT {dim_sql} AS segment, "
+                    f"CAST(SUM({m_sql}) AS BINARY_DOUBLE) AS total_amount, "
+                    f"CAST(AVG({m_sql}) AS BINARY_DOUBLE) AS avg_amount, "
+                    f"CAST(COUNT(*) AS NUMBER) AS record_count "
+                    f"FROM {table_sql} GROUP BY {dim_sql} ORDER BY total_amount DESC"
+                )
+            elif dialect in {"postgres", "postgresql"}:
+                sql = (
+                    f"SELECT {dim_sql} AS segment, "
+                    f"ROUND(SUM({m_sql})::numeric, 2)::float8 AS total_amount, "
+                    f"ROUND(AVG({m_sql})::numeric, 2)::float8 AS avg_amount, "
+                    f"COUNT(*)::bigint AS record_count "
+                    f"FROM {table_sql} GROUP BY {dim_sql} ORDER BY total_amount DESC"
+                )
+            else:
+                sql = (
+                    f"SELECT {dim_sql} AS segment, "
+                    f"ROUND(SUM({m_sql}), 2) AS total_amount, "
+                    f"ROUND(AVG({m_sql}), 2) AS avg_amount, "
+                    f"COUNT(*) AS record_count "
+                    f"FROM {table_sql} GROUP BY {dim_sql} ORDER BY total_amount DESC"
+                )
+        else:
+            col_list = ", ".join(_ident(c) for c in columns[:6])
+            sql = f"SELECT {col_list} FROM {table_sql} " + (
+                "FETCH FIRST 25 ROWS ONLY" if dialect == "oracle" else "LIMIT 25"
+            )
+        title = (question[:60] + "…") if len(question) > 60 else (question or f"Explore {table}")
+        return {
+            "title": title,
+            "reasoning": f"Aggregated read-only query over {table}",
+            "sql": sql,
+        }
+
+    def _chat_answer(self, payload: dict) -> dict:
+        question = str(payload.get("question") or "").strip()
+        rows = payload.get("rows") or []
+        columns = payload.get("columns") or []
+        table_name = str(payload.get("datasource") or "datasource")
+        if not rows:
+            return {
+                "answer_markdown": f"No matching records were returned from **{table_name}** for *{question}*.",
+                "follow_ups": [
+                    "Show overall summary by segment",
+                    "What is the daily trend over the last 30 days?",
+                    "Which segment has the highest average value?",
+                ],
+            }
+        top = rows[0]
+        summary_parts = [f"{col}: **{top.get(col)}**" for col in columns[:4] if col in top]
+        lead = ", ".join(summary_parts)
+        md = (
+            f"Here is the live breakdown from **{table_name}** ({len(rows)} rows returned).\n\n"
+            f"- **Top entry:** {lead}\n"
+            f"- All figures were computed directly in the database via read-only guarded SQL."
+        )
+        return {
+            "answer_markdown": md,
+            "follow_ups": [
+                "Break this down by daily trend",
+                "Compare top 3 vs bottom 3 segments",
+                "Show average transaction size per region",
+            ],
         }
 
 

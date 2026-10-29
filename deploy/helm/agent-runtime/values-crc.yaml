@@ -9,6 +9,31 @@ llm:
   mode: fake
 seedDemo: true
 seedSalesRows: 20000
+postgres:
+  storage: 4Gi
 networkPolicy:
   enabled: true
   extraEgress: []
+
+auth:
+  mode: oidc
+  bootstrapAdmins: "emre@company.example,admin@company.example"
+  oidc:
+    issuerUrl: "http://keycloak.agent-runtime.svc.cluster.local:8080/realms/agent-runtime"
+    publicIssuerUrl: "https://keycloak-agent-runtime.apps-crc.testing/realms/agent-runtime"
+    clientId: "agent-runtime"
+    clientSecret: "agent-runtime-dev-secret"
+    verifyTls: false
+
+keycloak:
+  enabled: true
+  hostname: "https://keycloak-agent-runtime.apps-crc.testing"
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: "1"
+      memory: 768Mi
+  route:
+    enabled: true

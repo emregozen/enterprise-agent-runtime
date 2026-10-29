@@ -202,6 +202,52 @@ spec:
               value: {{ .Values.otel.endpoint | quote }}
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.otel.serviceName | quote }}
+            - name: AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: AUTH_BOOTSTRAP_ADMINS
+              value: {{ .Values.auth.bootstrapAdmins | quote }}
+            - name: AUTH_SESSION_TTL_SECONDS
+              value: {{ .Values.auth.sessionTtlSeconds | quote }}
+            - name: AUTH_COOKIE_SECURE
+              value: {{ .Values.auth.cookieSecure | quote }}
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.auth.oidc.issuerUrl | quote }}
+            - name: OIDC_PUBLIC_ISSUER_URL
+              value: {{ .Values.auth.oidc.publicIssuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.auth.oidc.clientId | quote }}
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.auth.oidc.existingSecret.name }}
+                  name: {{ .Values.auth.oidc.existingSecret.name | quote }}
+                  key: {{ .Values.auth.oidc.existingSecret.key | quote }}
+                  {{- else }}
+                  name: agent-runtime-env
+                  key: OIDC_CLIENT_SECRET
+                  {{- end }}
+            {{- if .Values.auth.oidc.existingSecret.name }}
+            - name: OIDC_K8S_SECRET_NAME
+              value: {{ .Values.auth.oidc.existingSecret.name | quote }}
+            - name: OIDC_K8S_SECRET_KEY
+              value: {{ .Values.auth.oidc.existingSecret.key | quote }}
+            {{- end }}
+            - name: OIDC_SCOPES
+              value: {{ .Values.auth.oidc.scopes | quote }}
+            - name: OIDC_EMAIL_CLAIM
+              value: {{ .Values.auth.oidc.emailClaim | quote }}
+            - name: OIDC_NAME_CLAIM
+              value: {{ .Values.auth.oidc.nameClaim | quote }}
+            - name: OIDC_GROUPS_CLAIM
+              value: {{ .Values.auth.oidc.groupsClaim | quote }}
+            - name: OIDC_GROUP_MAPPING_ENABLED
+              value: {{ .Values.auth.oidc.groupMappingEnabled | quote }}
+            - name: OIDC_GROUP_MAPPING
+              value: {{ .Values.auth.oidc.groupMapping | quote }}
+            - name: OIDC_CA_BUNDLE
+              value: {{ .Values.auth.oidc.caBundle | quote }}
+            - name: OIDC_VERIFY_TLS
+              value: {{ .Values.auth.oidc.verifyTls | quote }}
             - name: HOME
               value: /tmp
             - name: TMPDIR

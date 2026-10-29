@@ -6,7 +6,16 @@ from urllib.parse import unquote, urlparse
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from datasources.base import ColumnInfo, FetchResult, PlanInfo, SchemaCatalog, TableInfo, arrow_record, assert_select_prefix
+from datasources.base import (
+    ColumnInfo,
+    FetchResult,
+    PlanInfo,
+    SchemaCatalog,
+    TableInfo,
+    arrow_record,
+    assert_select_prefix,
+    json_safe_record,
+)
 from sqlguard import guard_sql
 
 
@@ -74,6 +83,17 @@ class OracleSource:
         if row is None:
             return None
         return row[0]
+
+    def query_rows(self, sql: str, max_rows: int = 100) -> tuple[list[str], list[dict]]:
+        guarded = self._guarded(sql)
+        assert_select_prefix(guarded)
+        cap = max(1, min(int(max_rows), self.max_limit))
+        with self.conn.cursor() as cur:
+            cur.arraysize = cap
+            cur.execute(guarded)
+            columns = [item[0].lower() for item in (cur.description or [])]
+            chunk = cur.fetchmany(cap)
+        return columns, [json_safe_record(columns, row) for row in chunk]
 
     def fetch_to_parquet(self, sql: str, path: str, batch_rows: int) -> FetchResult:
         guarded = self._guarded(sql)

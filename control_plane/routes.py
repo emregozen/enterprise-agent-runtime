@@ -8,14 +8,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from control_plane.auth import effective_write_group_id, ensure_record_access, require_permission
 from control_plane.db import get_db
 from control_plane.models import Agent, AgentVersion, Artifact, AuditEvent, DataSourceRecord, Run, RunStep, Schedule, ToolCall
+from control_plane.rbac import Principal, allowed_group_ids_for, scope_query
 from control_plane.serialize import agent_out, run_out, schedule_out, spec_summary
 from control_plane.service import (
     ServiceError,
     add_step,
     add_version,
     apply_self_schedule,
+    audit,
     complete_run,
     create_agent,
     artifact_key,
@@ -212,17 +215,31 @@ class ToolIn(BaseModel):
     arguments: dict = Field(default_factory=dict)
 
 
-def _agent_or_404(db: Session, agent_id: uuid.UUID) -> Agent:
+def _agent_or_404(
+    db: Session,
+    agent_id: uuid.UUID,
+    principal: Principal | None = None,
+    action: str = "agent:read",
+) -> Agent:
     agent = db.get(Agent, agent_id)
     if agent is None:
         raise HTTPException(404, "ajan yok")
+    if principal is not None:
+        ensure_record_access(principal, agent.owner_group_id, action, "ajan yok")
     return agent
 
 
-def _run_or_404(db: Session, run_id: uuid.UUID) -> Run:
+def _run_or_404(
+    db: Session,
+    run_id: uuid.UUID,
+    principal: Principal | None = None,
+    action: str = "run:read",
+) -> Run:
     run = db.get(Run, run_id)
     if run is None:
         raise HTTPException(404, "koşum yok")
+    if principal is not None:
+        ensure_record_access(principal, run.owner_group_id, action, "koşum yok")
     return run
 
 
@@ -249,51 +266,82 @@ def health(db: Session = Depends(get_db)):
         "llm_mode": settings.llm_mode,
         "run_backend": settings.run_backend,
         "artifact_store": settings.resolved_artifact_store(),
+        "auth_mode": (settings.auth_mode or "disabled").strip().lower(),
     }
 
 
 @public.get("/datasources")
-def list_datasources(db: Session = Depends(get_db)):
+def list_datasources(
+    principal: Principal = Depends(require_permission("datasource:read")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import datasource_out
 
-    rows = db.query(DataSourceRecord).order_by(DataSourceRecord.name).all()
+    query = scope_query(db.query(DataSourceRecord), DataSourceRecord, principal, "datasource:read")
+    rows = query.order_by(DataSourceRecord.name).all()
     return [datasource_out(row) for row in rows]
 
 
 @public.post("/datasources", status_code=201)
-def create_datasource(body: DatasourceIn, db: Session = Depends(get_db)):
+def create_datasource(
+    body: DatasourceIn,
+    principal: Principal = Depends(require_permission("datasource:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import apply_datasource, datasource_out
 
+    group_id = effective_write_group_id(principal, "datasource:write")
     if db.query(DataSourceRecord).filter(DataSourceRecord.name == body.name).first():
         raise HTTPException(409, "bu ada sahip bir veri kaynağı var")
-    row = DataSourceRecord(name=body.name, dialect="postgres", dsn_env="DS_PENDING", allow_tables=body.allow_tables)
+    row = DataSourceRecord(
+        name=body.name,
+        dialect="postgres",
+        dsn_env="DS_PENDING",
+        allow_tables=body.allow_tables,
+        owner_group_id=group_id,
+        created_by=principal.user_id,
+    )
     try:
         apply_datasource(db, row, body, creating=True)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
+    db.flush()
+    audit(db, principal.actor, "datasource.created", "datasource", str(row.id), {"name": row.name})
     db.commit()
     return datasource_out(row)
 
 
 @public.post("/datasources/{name}/introspect")
-def introspect(name: str, db: Session = Depends(get_db)):
+def introspect(
+    name: str,
+    principal: Principal = Depends(require_permission("datasource:test")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import find_datasource
 
-    row = find_datasource(db, name)
+    allowed = None if principal.is_admin else allowed_group_ids_for(principal, "datasource:read")
+    row = find_datasource(db, name, allowed_group_ids=allowed)
     if row is None:
         raise HTTPException(404, "veri kaynağı yok")
+    ensure_record_access(principal, row.owner_group_id, "datasource:test", "veri kaynağı yok")
     return {"catalog": _live_catalog(db, row)}
 
 
 @public.post("/builder/draft")
-def draft(body: DraftIn, db: Session = Depends(get_db)):
+def draft(
+    body: DraftIn,
+    principal: Principal = Depends(require_permission("builder:draft")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import find_datasource
 
+    group_id = effective_write_group_id(principal, "builder:draft")
+    allowed = None if principal.is_admin else allowed_group_ids_for(principal, "datasource:read")
     settings = get_settings()
     sources = []
     for name in body.datasource_refs:
-        row = find_datasource(db, name)
+        row = find_datasource(db, name, allowed_group_ids=allowed)
         if row is None or not row.enabled:
             raise HTTPException(404, f"veri kaynağı yok: {name}")
         sources.append(
@@ -313,7 +361,7 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
         "datasources": sources,
         "agentspec_schema": AgentSpec.model_json_schema(),
     }
-    resolved = resolve_llm(db, settings, body.model_ref or "local-default")
+    resolved = resolve_llm(db, settings, body.model_ref or "local-default", allowed_group_ids=allowed)
     llm = make_llm(settings, resolved.get("name") or "local-default", provider=resolved)
     spec = None
     last_error: Exception | None = None
@@ -327,7 +375,7 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
         except Exception as exc:  # noqa: BLE001
             last_error = exc
             payload = {**payload, "validation_error": str(exc)[:2000]}
-    persist_llm_calls(db, None, getattr(llm, "calls", []), "builder")
+    persist_llm_calls(db, None, getattr(llm, "calls", []), "builder", owner_group_id=group_id)
     db.commit()
     if spec is None:
         raise HTTPException(422, f"taslak üretilemedi: {last_error}")
@@ -338,9 +386,10 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
     from shared.spec import apply_default_schedule, apply_delivery_prefill
 
     spec = apply_default_schedule(spec, body.description)
+    channel_query = scope_query(db.query(DeliveryChannel), DeliveryChannel, principal, "delivery_channel:read")
     names = [
         row.name
-        for row in db.query(DeliveryChannel).filter(DeliveryChannel.enabled.is_(True)).order_by(DeliveryChannel.name)
+        for row in channel_query.filter(DeliveryChannel.enabled.is_(True)).order_by(DeliveryChannel.name)
     ]
     spec = apply_delivery_prefill(spec, body.description, names)
     spec = AgentSpec.model_validate(spec).canonical()
@@ -348,8 +397,12 @@ def draft(body: DraftIn, db: Session = Depends(get_db)):
 
 
 @public.get("/agents")
-def list_agents(include_deleted: bool = False, db: Session = Depends(get_db)):
-    query = db.query(Agent).order_by(Agent.created_at.desc())
+def list_agents(
+    include_deleted: bool = False,
+    principal: Principal = Depends(require_permission("agent:read")),
+    db: Session = Depends(get_db),
+):
+    query = scope_query(db.query(Agent), Agent, principal, "agent:read").order_by(Agent.created_at.desc())
     if not include_deleted:
         query = query.filter(Agent.status != "deleted")
     rows = query.all()
@@ -361,9 +414,23 @@ def list_agents(include_deleted: bool = False, db: Session = Depends(get_db)):
 
 
 @public.post("/agents", status_code=201)
-def post_agent(body: AgentIn, db: Session = Depends(get_db)):
+def post_agent(
+    body: AgentIn,
+    principal: Principal = Depends(require_permission("agent:write")),
+    db: Session = Depends(get_db),
+):
+    group_id = effective_write_group_id(principal, "agent:write")
+    allowed = None if principal.is_admin else allowed_group_ids_for(principal, "datasource:read")
     try:
-        agent = create_agent(db, body.spec, publish=body.publish, actor="ui")
+        agent = create_agent(
+            db,
+            body.spec,
+            publish=body.publish,
+            actor=principal.actor,
+            owner_group_id=group_id,
+            created_by=principal.user_id,
+            allowed_group_ids=allowed,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
@@ -389,36 +456,79 @@ def _agent_detail(db: Session, agent: Agent) -> dict:
 
 
 @public.get("/agents/{agent_id}")
-def get_agent(agent_id: uuid.UUID, db: Session = Depends(get_db)):
-    return _agent_detail(db, _agent_or_404(db, agent_id))
+def get_agent(
+    agent_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("agent:read")),
+    db: Session = Depends(get_db),
+):
+    return _agent_detail(db, _agent_or_404(db, agent_id, principal, "agent:read"))
 
 
 @public.post("/agents/{agent_id}/versions", status_code=201)
-def post_version(agent_id: uuid.UUID, body: AgentIn, db: Session = Depends(get_db)):
-    agent = _agent_or_404(db, agent_id)
+def post_version(
+    agent_id: uuid.UUID,
+    body: AgentIn,
+    principal: Principal = Depends(require_permission("agent:write")),
+    db: Session = Depends(get_db),
+):
+    agent = _agent_or_404(db, agent_id, principal, "agent:write")
+    allowed = None if principal.is_admin else ([agent.owner_group_id] if agent.owner_group_id else allowed_group_ids_for(principal, "datasource:read"))
     try:
-        row = add_version(db, agent, body.spec, publish=body.publish, actor="ui")
+        row = add_version(
+            db,
+            agent,
+            body.spec,
+            publish=body.publish,
+            actor=principal.actor,
+            created_by=principal.user_id,
+            allowed_group_ids=allowed,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return {"version": row.version, "status": row.status, "spec": row.spec}
 
 
 @public.post("/agents/{agent_id}/pause")
-def pause(agent_id: uuid.UUID, body: PauseIn, db: Session = Depends(get_db)):
-    agent = _agent_or_404(db, agent_id)
+def pause(
+    agent_id: uuid.UUID,
+    body: PauseIn,
+    principal: Principal = Depends(require_permission("schedule:pause")),
+    db: Session = Depends(get_db),
+):
+    agent = _agent_or_404(db, agent_id, principal, "schedule:pause")
     schedule = db.query(Schedule).filter(Schedule.agent_id == agent.id).one_or_none()
     if schedule is None:
         raise HTTPException(409, "yayınlanmış zamanlama yok")
     schedule.paused = body.paused
+    audit(
+        db,
+        principal.actor,
+        "schedule.paused" if body.paused else "schedule.resumed",
+        "agent",
+        str(agent.id),
+        {"paused": body.paused},
+    )
     db.commit()
     return schedule_out(schedule)
 
 
 @public.post("/agents/{agent_id}/runs", status_code=202)
-def post_run(agent_id: uuid.UUID, body: RunIn, db: Session = Depends(get_db)):
-    agent = _agent_or_404(db, agent_id)
+def post_run(
+    agent_id: uuid.UUID,
+    body: RunIn,
+    principal: Principal = Depends(require_permission("agent:run")),
+    db: Session = Depends(get_db),
+):
+    agent = _agent_or_404(db, agent_id, principal, "agent:run")
     try:
-        run, _token = trigger_run(db, agent, trigger="manual", dry_run=body.dry_run, actor="ui")
+        run, _token = trigger_run(
+            db,
+            agent,
+            trigger="manual",
+            dry_run=body.dry_run,
+            actor=principal.actor,
+            created_by=principal.user_id,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return run_out(run)
@@ -432,9 +542,10 @@ def list_runs(
     q: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    principal: Principal = Depends(require_permission("run:read")),
     db: Session = Depends(get_db),
 ):
-    query = db.query(Run).order_by(Run.created_at.desc())
+    query = scope_query(db.query(Run), Run, principal, "run:read").order_by(Run.created_at.desc())
     if agent_id:
         query = query.filter(Run.agent_id == agent_id)
     if status:
@@ -447,8 +558,12 @@ def list_runs(
 
 
 @public.get("/runs/{run_id}")
-def get_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
-    run = _run_or_404(db, run_id)
+def get_run(
+    run_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:read")),
+    db: Session = Depends(get_db),
+):
+    run = _run_or_404(db, run_id, principal, "run:read")
     steps = db.query(RunStep).filter(RunStep.run_id == run.id).order_by(RunStep.ordinal).all()
     tools = db.query(ToolCall).filter(ToolCall.run_id == run.id).order_by(ToolCall.created_at).all()
     artifacts = db.query(Artifact).filter(Artifact.run_id == run.id).order_by(Artifact.created_at).all()
@@ -493,15 +608,25 @@ def get_run(run_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @public.get("/runs/{run_id}/logs")
-def run_logs(run_id: uuid.UUID, db: Session = Depends(get_db)):
-    run = _run_or_404(db, run_id)
+def run_logs(
+    run_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:read")),
+    db: Session = Depends(get_db),
+):
+    run = _run_or_404(db, run_id, principal, "run:read")
     from control_plane.backends import get_backend
 
     return {"text": get_backend().read_logs(run)}
 
 
 @public.get("/runs/{run_id}/artifacts/{artifact_id}")
-def download_artifact(run_id: uuid.UUID, artifact_id: uuid.UUID, db: Session = Depends(get_db)):
+def download_artifact(
+    run_id: uuid.UUID,
+    artifact_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:read")),
+    db: Session = Depends(get_db),
+):
+    _run_or_404(db, run_id, principal, "run:read")
     artifact = db.get(Artifact, artifact_id)
     if artifact is None or artifact.run_id != run_id:
         raise HTTPException(404, "artefakt yok")
@@ -535,7 +660,11 @@ def run_context(run_id: uuid.UUID, authorization: str | None = Header(default=No
     if run.status == "pending":
         run.status = "running"
         db.commit()
-    rows = load_sources_for_spec(db, run.spec_snapshot)
+    rows = load_sources_for_spec(
+        db,
+        run.spec_snapshot,
+        allowed_group_ids=[run.owner_group_id] if run.owner_group_id else None,
+    )
     previous = (
         db.query(Run)
         .filter(Run.agent_id == run.agent_id, Run.id != run.id, Run.status.in_(["succeeded", "needs_review"]))
@@ -707,23 +836,39 @@ def _source_unreachable(row: DataSourceRecord) -> str:
     )
 
 
-def _source_or_404(db: Session, datasource_id: uuid.UUID) -> DataSourceRecord:
+def _source_or_404(
+    db: Session,
+    datasource_id: uuid.UUID,
+    principal: Principal | None = None,
+    action: str = "datasource:read",
+) -> DataSourceRecord:
     row = db.get(DataSourceRecord, datasource_id)
     if row is None:
         raise HTTPException(404, "veri kaynağı yok")
+    if principal is not None:
+        ensure_record_access(principal, row.owner_group_id, action, "veri kaynağı yok")
     return row
 
 
 @public.get("/datasources/{datasource_id}")
-def get_datasource(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
-    return _ds_out(_source_or_404(db, datasource_id))
+def get_datasource(
+    datasource_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("datasource:read")),
+    db: Session = Depends(get_db),
+):
+    return _ds_out(_source_or_404(db, datasource_id, principal, "datasource:read"))
 
 
 @public.patch("/datasources/{datasource_id}")
-def patch_datasource(datasource_id: uuid.UUID, body: DatasourceUpdate, db: Session = Depends(get_db)):
+def patch_datasource(
+    datasource_id: uuid.UUID,
+    body: DatasourceUpdate,
+    principal: Principal = Depends(require_permission("datasource:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import apply_datasource
 
-    row = _source_or_404(db, datasource_id)
+    row = _source_or_404(db, datasource_id, principal, "datasource:write")
     merged = DatasourceIn(
         name=row.name,
         dialect=body.dialect or row.dialect,
@@ -751,61 +896,95 @@ def patch_datasource(datasource_id: uuid.UUID, body: DatasourceUpdate, db: Sessi
         apply_datasource(db, row, merged, creating=False, reset_secret_source=body.secret_backend is not None)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    audit(db, principal.actor, "datasource.updated", "datasource", str(row.id), {"name": row.name})
     db.commit()
     return _ds_out(row)
 
 
 @public.delete("/datasources/{datasource_id}", status_code=204)
-def delete_datasource(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
-    row = _source_or_404(db, datasource_id)
+def delete_datasource(
+    datasource_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("datasource:delete")),
+    db: Session = Depends(get_db),
+):
+    row = _source_or_404(db, datasource_id, principal, "datasource:delete")
+    audit(db, principal.actor, "datasource.deleted", "datasource", str(row.id), {"name": row.name})
     db.delete(row)
     db.commit()
 
 
 @public.post("/datasources/{datasource_id}/test")
-def test_datasource_route(datasource_id: uuid.UUID, db: Session = Depends(get_db)):
+def test_datasource_route(
+    datasource_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("datasource:test")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import test_datasource
 
+    row = _source_or_404(db, datasource_id, principal, "datasource:test")
     try:
-        return test_datasource(db, _source_or_404(db, datasource_id))
+        return test_datasource(db, row)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 
 
 @public.get("/llm/providers")
-def list_providers(db: Session = Depends(get_db)):
+def list_providers(
+    principal: Principal = Depends(require_permission("llm_provider:read")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import provider_out
     from control_plane.models import LlmProvider
 
-    rows = db.query(LlmProvider).order_by(LlmProvider.name).all()
+    query = scope_query(db.query(LlmProvider), LlmProvider, principal, "llm_provider:read")
+    rows = query.order_by(LlmProvider.name).all()
     return [provider_out(row) for row in rows]
 
 
 @public.post("/llm/providers", status_code=201)
-def create_provider(body: LlmIn, db: Session = Depends(get_db)):
+def create_provider(
+    body: LlmIn,
+    principal: Principal = Depends(require_permission("llm_provider:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import apply_provider, provider_out
     from control_plane.models import LlmProvider
 
+    group_id = effective_write_group_id(principal, "llm_provider:write")
     if db.query(LlmProvider).filter(LlmProvider.name == body.name).first():
         raise HTTPException(409, "bu ada sahip bir model var")
-    row = LlmProvider(name=body.name, base_url=body.base_url, model=body.model)
+    row = LlmProvider(
+        name=body.name,
+        base_url=body.base_url,
+        model=body.model,
+        owner_group_id=group_id,
+        created_by=principal.user_id,
+    )
     try:
         apply_provider(db, row, body, creating=True)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
+    db.flush()
+    audit(db, principal.actor, "llm_provider.created", "llm_provider", str(row.id), {"name": row.name})
     db.commit()
     return provider_out(row)
 
 
 @public.patch("/llm/providers/{provider_id}")
-def patch_provider(provider_id: uuid.UUID, body: LlmPatch, db: Session = Depends(get_db)):
+def patch_provider(
+    provider_id: uuid.UUID,
+    body: LlmPatch,
+    principal: Principal = Depends(require_permission("llm_provider:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import apply_provider, provider_out
     from control_plane.models import LlmProvider
 
     row = db.get(LlmProvider, provider_id)
     if row is None:
         raise HTTPException(404, "model yok")
+    ensure_record_access(principal, row.owner_group_id, "llm_provider:write", "model yok")
     merged = LlmIn(
         name=row.name,
         base_url=body.base_url or row.base_url,
@@ -827,29 +1006,41 @@ def patch_provider(provider_id: uuid.UUID, body: LlmPatch, db: Session = Depends
         apply_provider(db, row, merged, creating=False, reset_secret_source=body.secret_backend is not None)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    audit(db, principal.actor, "llm_provider.updated", "llm_provider", str(row.id), {"name": row.name})
     db.commit()
     return provider_out(row)
 
 
 @public.delete("/llm/providers/{provider_id}", status_code=204)
-def delete_provider(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_provider(
+    provider_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("llm_provider:delete")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import LlmProvider
 
     row = db.get(LlmProvider, provider_id)
     if row is None:
         raise HTTPException(404, "model yok")
+    ensure_record_access(principal, row.owner_group_id, "llm_provider:delete", "model yok")
+    audit(db, principal.actor, "llm_provider.deleted", "llm_provider", str(row.id), {"name": row.name})
     db.delete(row)
     db.commit()
 
 
 @public.post("/llm/providers/{provider_id}/test")
-def test_provider_route(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+def test_provider_route(
+    provider_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("llm_provider:test")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import test_provider
     from control_plane.models import LlmProvider
 
     row = db.get(LlmProvider, provider_id)
     if row is None:
         raise HTTPException(404, "model yok")
+    ensure_record_access(principal, row.owner_group_id, "llm_provider:test", "model yok")
     try:
         return test_provider(db, row, get_settings())
     except ServiceError as exc:
@@ -857,39 +1048,62 @@ def test_provider_route(provider_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @public.get("/secret-providers")
-def list_secret_providers(db: Session = Depends(get_db)):
+def list_secret_providers(
+    principal: Principal = Depends(require_permission("secret_provider:read")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import SecretProvider
     from control_plane.secret_catalog import secret_provider_out
 
-    rows = db.query(SecretProvider).order_by(SecretProvider.name).all()
+    query = scope_query(db.query(SecretProvider), SecretProvider, principal, "secret_provider:read")
+    rows = query.order_by(SecretProvider.name).all()
     return [secret_provider_out(row) for row in rows]
 
 
 @public.post("/secret-providers", status_code=201)
-def create_secret_provider(body: SecretProviderIn, db: Session = Depends(get_db)):
+def create_secret_provider(
+    body: SecretProviderIn,
+    principal: Principal = Depends(require_permission("secret_provider:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import SecretProvider
     from control_plane.secret_catalog import apply_secret_provider, secret_provider_out
 
+    group_id = effective_write_group_id(principal, "secret_provider:write")
     if db.query(SecretProvider).filter(SecretProvider.name == body.name).first():
         raise HTTPException(409, "bu ada sahip bir gizli bilgi kaynağı var")
-    row = SecretProvider(name=body.name.strip(), kind=body.kind, base_url=body.base_url)
+    row = SecretProvider(
+        name=body.name.strip(),
+        kind=body.kind,
+        base_url=body.base_url,
+        owner_group_id=group_id,
+        created_by=principal.user_id,
+    )
     try:
         apply_secret_provider(row, body, creating=True)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     db.add(row)
+    db.flush()
+    audit(db, principal.actor, "secret_provider.created", "secret_provider", str(row.id), {"name": row.name, "kind": row.kind})
     db.commit()
     return secret_provider_out(row)
 
 
 @public.patch("/secret-providers/{provider_id}")
-def patch_secret_provider(provider_id: uuid.UUID, body: SecretProviderPatch, db: Session = Depends(get_db)):
+def patch_secret_provider(
+    provider_id: uuid.UUID,
+    body: SecretProviderPatch,
+    principal: Principal = Depends(require_permission("secret_provider:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import SecretProvider
     from control_plane.secret_catalog import apply_secret_provider, secret_provider_out
 
     row = db.get(SecretProvider, provider_id)
     if row is None:
         raise HTTPException(404, "gizli bilgi kaynağı yok")
+    ensure_record_access(principal, row.owner_group_id, "secret_provider:write", "gizli bilgi kaynağı yok")
     merged = SecretProviderIn(
         name=row.name,
         kind=body.kind or row.kind,
@@ -909,32 +1123,46 @@ def patch_secret_provider(provider_id: uuid.UUID, body: SecretProviderPatch, db:
         apply_secret_provider(row, merged, creating=False)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
+    audit(db, principal.actor, "secret_provider.updated", "secret_provider", str(row.id), {"name": row.name})
     db.commit()
     return secret_provider_out(row)
 
 
 @public.delete("/secret-providers/{provider_id}", status_code=204)
-def delete_secret_provider(provider_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_secret_provider(
+    provider_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("secret_provider:delete")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import SecretProvider
     from control_plane.secret_catalog import provider_in_use
 
     row = db.get(SecretProvider, provider_id)
     if row is None:
         raise HTTPException(404, "gizli bilgi kaynağı yok")
+    ensure_record_access(principal, row.owner_group_id, "secret_provider:delete", "gizli bilgi kaynağı yok")
     if provider_in_use(db, row.id):
         raise HTTPException(409, "bu kaynak bir veri kaynağı veya model tarafından kullanılıyor")
+    audit(db, principal.actor, "secret_provider.deleted", "secret_provider", str(row.id), {"name": row.name})
     db.delete(row)
     db.commit()
 
 
 @public.post("/secret-providers/{provider_id}/test")
-def test_secret_provider(provider_id: uuid.UUID, body: SecretProbeIn | None = None, db: Session = Depends(get_db)):
+def test_secret_provider(
+    provider_id: uuid.UUID,
+    body: SecretProbeIn | None = None,
+    principal: Principal = Depends(require_permission("secret_provider:test")),
+    db: Session = Depends(get_db),
+):
     from control_plane.models import SecretProvider
     from secret_sources.errors import SecretProviderError
     from secret_sources.resolve import probe_provider
 
-    if db.get(SecretProvider, provider_id) is None:
+    row = db.get(SecretProvider, provider_id)
+    if row is None:
         raise HTTPException(404, "gizli bilgi kaynağı yok")
+    ensure_record_access(principal, row.owner_group_id, "secret_provider:test", "gizli bilgi kaynağı yok")
     probe = body or SecretProbeIn()
     try:
         return probe_provider(db, provider_id, path=probe.secret_path, ref=probe.secret_ref)
@@ -943,22 +1171,34 @@ def test_secret_provider(provider_id: uuid.UUID, body: SecretProbeIn | None = No
 
 
 @public.get("/dashboard")
-def get_dashboard(days: int = 14, db: Session = Depends(get_db)):
+def get_dashboard(
+    days: int = 14,
+    principal: Principal = Depends(require_permission("dashboard:read")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import dashboard
 
-    return dashboard(db, days)
+    allowed = None if principal.is_admin else allowed_group_ids_for(principal, "dashboard:read")
+    return dashboard(db, days, allowed_group_ids=allowed)
 
 
 @public.get("/settings")
-def get_public_settings():
+def get_public_settings(
+    _principal: Principal = Depends(require_permission("settings:read")),
+):
     from control_plane.catalog import public_settings
 
     return public_settings(get_settings())
 
 
 @public.patch("/agents/{agent_id}")
-def patch_agent(agent_id: uuid.UUID, body: AgentPatch, db: Session = Depends(get_db)):
-    agent = _agent_or_404(db, agent_id)
+def patch_agent(
+    agent_id: uuid.UUID,
+    body: AgentPatch,
+    principal: Principal = Depends(require_permission("agent:write")),
+    db: Session = Depends(get_db),
+):
+    agent = _agent_or_404(db, agent_id, principal, "agent:write")
     if agent.status == "deleted":
         raise HTTPException(409, "silinmiş ajan düzenlenemez")
     if body.description is not None:
@@ -968,20 +1208,40 @@ def patch_agent(agent_id: uuid.UUID, body: AgentPatch, db: Session = Depends(get
     if body.spec is None:
         db.commit()
         return _agent_detail(db, agent)
+    allowed = None if principal.is_admin else ([agent.owner_group_id] if agent.owner_group_id else allowed_group_ids_for(principal, "datasource:read"))
     try:
-        add_version(db, agent, body.spec, publish=body.publish, actor="ui")
+        add_version(
+            db,
+            agent,
+            body.spec,
+            publish=body.publish,
+            actor=principal.actor,
+            created_by=principal.user_id,
+            allowed_group_ids=allowed,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return _agent_detail(db, agent)
 
 
 @public.post("/agents/{agent_id}/duplicate", status_code=201)
-def post_duplicate(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+def post_duplicate(
+    agent_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("agent:write")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import duplicate_agent
 
-    agent = _agent_or_404(db, agent_id)
+    agent = _agent_or_404(db, agent_id, principal, "agent:write")
     try:
-        created = duplicate_agent(db, agent, "ui")
+        created = duplicate_agent(
+            db,
+            agent,
+            principal.actor,
+            owner_group_id=agent.owner_group_id,
+            created_by=principal.user_id,
+            allowed_group_ids=allowed_group_ids_for(principal, "datasource:read"),
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     schedule = db.query(Schedule).filter(Schedule.agent_id == created.id).one_or_none()
@@ -989,62 +1249,100 @@ def post_duplicate(agent_id: uuid.UUID, db: Session = Depends(get_db)):
 
 
 @public.delete("/agents/{agent_id}", status_code=204)
-def delete_agent_route(agent_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_agent_route(
+    agent_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("agent:delete")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import delete_agent
 
-    delete_agent(db, _agent_or_404(db, agent_id), "ui")
+    delete_agent(db, _agent_or_404(db, agent_id, principal, "agent:delete"), principal.actor)
 
 
 @public.get("/agents/{agent_id}/diff")
-def agent_diff(agent_id: uuid.UUID, left: int, right: int, db: Session = Depends(get_db)):
+def agent_diff(
+    agent_id: uuid.UUID,
+    left: int,
+    right: int,
+    principal: Principal = Depends(require_permission("agent:read")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import spec_diff
 
     try:
-        text = spec_diff(db, _agent_or_404(db, agent_id), left, right)
+        text = spec_diff(db, _agent_or_404(db, agent_id, principal, "agent:read"), left, right)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return {"diff": text}
 
 
 @public.post("/runs/bulk-delete")
-def post_bulk_delete(body: BulkDeleteIn, db: Session = Depends(get_db)):
+def post_bulk_delete(
+    body: BulkDeleteIn,
+    principal: Principal = Depends(require_permission("run:delete")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import bulk_delete_runs
 
+    allowed = None if principal.is_admin else allowed_group_ids_for(principal, "run:delete")
     try:
-        removed = bulk_delete_runs(db, older_than_days=body.older_than_days, statuses=body.statuses, actor="ui")
+        removed = bulk_delete_runs(
+            db,
+            older_than_days=body.older_than_days,
+            statuses=body.statuses,
+            actor=principal.actor,
+            allowed_group_ids=allowed,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return {"deleted": removed}
 
 
 @public.post("/runs/{run_id}/cancel")
-def post_cancel(run_id: uuid.UUID, db: Session = Depends(get_db)):
+def post_cancel(
+    run_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:cancel")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import cancel_run
 
     try:
-        run = cancel_run(db, _run_or_404(db, run_id), "ui")
+        run = cancel_run(db, _run_or_404(db, run_id, principal, "run:cancel"), principal.actor)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return run_out(run)
 
 
 @public.post("/runs/{run_id}/rerun", status_code=202)
-def post_rerun(run_id: uuid.UUID, db: Session = Depends(get_db)):
+def post_rerun(
+    run_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:rerun")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import rerun
 
     try:
-        run, _token = rerun(db, _run_or_404(db, run_id), "ui")
+        run, _token = rerun(
+            db,
+            _run_or_404(db, run_id, principal, "run:rerun"),
+            principal.actor,
+            created_by=principal.user_id,
+        )
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
     return run_out(run)
 
 
 @public.delete("/runs/{run_id}", status_code=204)
-def delete_run_route(run_id: uuid.UUID, db: Session = Depends(get_db)):
+def delete_run_route(
+    run_id: uuid.UUID,
+    principal: Principal = Depends(require_permission("run:delete")),
+    db: Session = Depends(get_db),
+):
     from control_plane.catalog import delete_run
 
     try:
-        delete_run(db, _run_or_404(db, run_id), "ui")
+        delete_run(db, _run_or_404(db, run_id, principal, "run:delete"), principal.actor)
     except ServiceError as exc:
         raise HTTPException(exc.status_code, str(exc)) from exc
 

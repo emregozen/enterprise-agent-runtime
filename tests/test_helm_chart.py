@@ -160,3 +160,31 @@ def test_postgres_shm_is_a_memory_volume():
     volume = next(item for item in spec["volumes"] if item["name"] == "dshm")
     assert volume["emptyDir"]["medium"] == "Memory"
     assert volume["emptyDir"]["sizeLimit"] == "256Mi"
+
+
+def test_oidc_env_and_optional_keycloak_render():
+    disabled = _render("--set", "keycloak.enabled=false")
+    assert not any(doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "keycloak" for doc in disabled)
+    deploy = next(doc for doc in disabled if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "control-plane")
+    env = {item["name"]: item.get("value") for item in deploy["spec"]["template"]["spec"]["containers"][0]["env"]}
+    assert env["AUTH_MODE"] == "oidc"
+    assert env["OIDC_CLIENT_ID"] == "agent-runtime"
+
+    kc = _render(
+        "--set",
+        "keycloak.enabled=true",
+        "--set",
+        "keycloak.route.enabled=true",
+        "--set",
+        "auth.bootstrapAdmins=admin@company.example",
+        "--set",
+        "auth.oidc.existingSecret.name=oidc-client",
+    )
+    kc_deploy = next(doc for doc in kc if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "keycloak")
+    kc_container = kc_deploy["spec"]["template"]["spec"]["containers"][0]
+    assert kc_container["securityContext"]["runAsNonRoot"] is True
+    assert any(doc.get("kind") == "Route" and doc["metadata"]["name"] == "keycloak" for doc in kc)
+    cp = next(doc for doc in kc if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "control-plane")
+    cp_env = cp["spec"]["template"]["spec"]["containers"][0]["env"]
+    secret_ref = next(item for item in cp_env if item["name"] == "OIDC_CLIENT_SECRET")
+    assert secret_ref["valueFrom"]["secretKeyRef"]["name"] == "oidc-client"

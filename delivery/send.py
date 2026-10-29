@@ -120,6 +120,8 @@ def _send_target(db: Session, run: Run, target: dict, *, automatic: bool) -> boo
 
     name = str(target.get("channel") or "")
     channel = db.query(DeliveryChannel).filter(DeliveryChannel.name == name).one_or_none()
+    if channel is not None and run.owner_group_id and channel.owner_group_id and channel.owner_group_id != run.owner_group_id:
+        channel = None
     recipients = {"to": list(target.get("to") or []), "cc": list(target.get("cc") or [])}
     subject = render_subject(
         str(target.get("subject") or ""),

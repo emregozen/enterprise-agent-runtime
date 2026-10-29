@@ -3,15 +3,71 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid as UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from control_plane.db import Base
 
 
+DEFAULT_GROUP_UUID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class Group(Base):
+    __tablename__ = "groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("issuer", "sub", name="uq_user_issuer_sub"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    issuer: Mapped[str] = mapped_column(String(300))
+    sub: Mapped[str] = mapped_column(String(200))
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    # pending | active | rejected | disabled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GroupMembership(Base):
+    __tablename__ = "group_memberships"
+    __table_args__ = (UniqueConstraint("user_id", "group_id", name="uq_user_group_membership"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"), index=True)
+    # viewer | operator | editor
+    role: Mapped[str] = mapped_column(String(20), default="viewer")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    active_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("groups.id", ondelete="SET NULL"), nullable=True
+    )
+    id_token_hint: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Agent(Base):
@@ -21,6 +77,16 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(63), unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     owner: Mapped[str] = mapped_column(String(120), default="")
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String(20), default="draft")
     current_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -36,6 +102,16 @@ class AgentVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     spec: Mapped[dict] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(20), default="draft")
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -69,6 +145,16 @@ class DataSourceRecord(Base):
     secret_form: Mapped[str] = mapped_column(String(16), default="password")
     options: Mapped[dict] = mapped_column(JSONB, default=dict)
     read_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -94,6 +180,16 @@ class LlmProvider(Base):
     extra_params: Mapped[dict] = mapped_column(JSONB, default=dict)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -116,6 +212,16 @@ class SecretProvider(Base):
     tls_key_key: Mapped[str] = mapped_column(String(253), default="")
     credential_namespace: Mapped[str] = mapped_column(String(63), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -124,6 +230,13 @@ class LlmCall(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("runs.id"), nullable=True, index=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
     provider_name: Mapped[str] = mapped_column(String(63), default="")
     model: Mapped[str] = mapped_column(String(120), default="")
     purpose: Mapped[str] = mapped_column(String(32), default="plan")
@@ -139,6 +252,16 @@ class Schedule(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), unique=True, index=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     mode: Mapped[str] = mapped_column(String(16), default="manual")
     cron: Mapped[str | None] = mapped_column(String(120), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="Europe/Istanbul")
@@ -158,6 +281,16 @@ class Run(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id"), index=True)
     agent_name: Mapped[str] = mapped_column(String(63))
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     spec_version: Mapped[int] = mapped_column(Integer)
     spec_snapshot: Mapped[dict] = mapped_column(JSONB)
     trigger: Mapped[str] = mapped_column(String(16))
@@ -236,6 +369,16 @@ class DeliveryChannel(Base):
     credential_ciphertext: Mapped[str] = mapped_column(Text, default="")
     credential_hint: Mapped[str] = mapped_column(String(16), default="")
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -267,3 +410,70 @@ class Artifact(Base):
     sha256: Mapped[str] = mapped_column(String(64))
     size_bytes: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title: Mapped[str] = mapped_column(String(200), default="New conversation")
+    datasource_name: Mapped[str] = mapped_column(String(120), index=True)
+    model_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text, default="")
+    sql: Mapped[str | None] = mapped_column(Text, nullable=True)
+    columns: Mapped[list] = mapped_column(JSONB, default=list)
+    rows: Mapped[list] = mapped_column(JSONB, default=list)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="succeeded")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    guard_info: Mapped[dict] = mapped_column(JSONB, default=dict)
+    follow_ups: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ResultBoard(Base):
+    """User-curated board that pins the latest results of one or more agents."""
+
+    __tablename__ = "result_boards"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(120))
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("groups.id", ondelete="SET NULL"),
+        nullable=True,
+        default=DEFAULT_GROUP_UUID,
+        index=True,
+    )
+    shared: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Ordered list of {"id": str, "agent_id": str, "size": "sm" | "md" | "lg"}.
+    widgets: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

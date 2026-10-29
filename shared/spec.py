@@ -248,11 +248,27 @@ def apply_delivery_prefill(spec: dict, description: str, channel_names: list[str
     return spec
 
 
+CHART_DATA_INSTRUCTION = (
+    "Chart data requirement: besides the requested analysis, the report must contain at least one markdown table "
+    "that can be drawn as a chart. Its first column holds unique category labels (for example region names or dates). "
+    "Every other column holds one numeric measure with plain numbers only: no text mixed into number cells, "
+    "units go in the column header. Use between 2 and 30 rows. Put the table under a short heading that says what it shows."
+)
+
+
+def goal_for_planning(goal: str, chart_data: bool) -> str:
+    """The goal the planner sees. The stored goal stays as the user wrote it."""
+    if not chart_data:
+        return goal
+    return f"{goal.rstrip()}\n\n{CHART_DATA_INSTRUCTION}"
+
+
 class OutputSpec(BaseModel):
     report: Literal["markdown"] = "markdown"
     artifacts: list[str] = Field(default_factory=lambda: ["json", "md", "svg"])
     notify: list[str] = Field(default_factory=list)
     sections: list[str] = Field(default_factory=list)
+    chartData: bool = False
 
 
 class VerificationSpec(BaseModel):

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Select } from "../components/Select";
 import { ActionButton, ConfirmDialog, DataTable, Empty, Modal, SkeletonRows } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { announceError, notify } from "../lib/notify";
@@ -49,6 +50,7 @@ export function SecretProviders() {
   const [editing, setEditing] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Provider | null>(null);
   const { run, pending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Provider[]>("/api/secret-providers").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -123,9 +125,33 @@ export function SecretProviders() {
       header: "",
       cell: ({ row }) => (
         <span className="row">
-          <ActionButton className="btn-ghost" busy={pending(`test:${row.original.id}`)} onClick={() => test(row.original.id)}>{copy.test}</ActionButton>
-          <button className="btn-ghost" type="button" onClick={() => open(row.original)}>{copy.edit}</button>
-          <button className="btn-danger" type="button" onClick={() => setPendingDelete(row.original)}>{copy.delete}</button>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending(`test:${row.original.id}`)}
+            disabled={!can("secret_provider:test")}
+            title={!can("secret_provider:test") ? copy.permissionDeniedHint : undefined}
+            onClick={() => test(row.original.id)}
+          >
+            {copy.test}
+          </ActionButton>
+          <button
+            className="btn-ghost"
+            type="button"
+            disabled={!can("secret_provider:write")}
+            title={!can("secret_provider:write") ? copy.permissionDeniedHint : undefined}
+            onClick={() => open(row.original)}
+          >
+            {copy.edit}
+          </button>
+          <button
+            className="btn-danger"
+            type="button"
+            disabled={!can("secret_provider:delete")}
+            title={!can("secret_provider:delete") ? copy.permissionDeniedHint : undefined}
+            onClick={() => setPendingDelete(row.original)}
+          >
+            {copy.delete}
+          </button>
         </span>
       ),
     },
@@ -162,7 +188,15 @@ export function SecretProviders() {
           <h1>Secret sources</h1>
           <p>Conjur and CyberArk CCP addresses live here. API keys and client certificates are not stored in plaintext. The control plane reads them from a Kubernetes Secret in its own namespace.</p>
         </div>
-        <button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>
+        <button
+          className="btn"
+          type="button"
+          disabled={!can("secret_provider:write")}
+          title={!can("secret_provider:write") ? copy.permissionDeniedHint : undefined}
+          onClick={() => { setEditing(null); setForm(EMPTY); }}
+        >
+          New source
+        </button>
       </div>
       <section className="card">
         {rows.length === 0 ? <Empty title="No sources" body="Add a Conjur or CCP record. The OpenBao/Vault kind is reserved and does not read secrets yet." action={<button className="btn" type="button" onClick={() => { setEditing(null); setForm(EMPTY); }}>New source</button>} /> : <DataTable data={rows} columns={columns} />}

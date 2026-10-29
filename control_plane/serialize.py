@@ -11,6 +11,8 @@ def agent_out(agent, schedule=None, goal: str | None = None) -> dict:
         "name": agent.name,
         "description": agent.description,
         "owner": agent.owner,
+        "owner_group_id": str(agent.owner_group_id) if getattr(agent, "owner_group_id", None) else None,
+        "created_by": str(agent.created_by) if getattr(agent, "created_by", None) else None,
         "status": agent.status,
         "current_version": agent.current_version,
         "goal": goal if goal is not None else agent.description,
@@ -34,6 +36,7 @@ def schedule_out(schedule) -> dict | None:
         "max_runs_per_day": schedule.max_runs_per_day,
         "window": schedule.window,
         "concurrency": schedule.concurrency,
+        "owner_group_id": str(schedule.owner_group_id) if getattr(schedule, "owner_group_id", None) else None,
     }
 
 
@@ -43,6 +46,8 @@ def run_out(run) -> dict:
         "id": str(run.id),
         "agent_id": str(run.agent_id),
         "agent_name": run.agent_name,
+        "owner_group_id": str(run.owner_group_id) if getattr(run, "owner_group_id", None) else None,
+        "created_by": str(run.created_by) if getattr(run, "created_by", None) else None,
         "spec_version": run.spec_version,
         "trigger": run.trigger,
         "status": run.status,

@@ -73,7 +73,8 @@ class LocalBackend(RunBackend):
             run = db.get(Run, run_id)
             if run is None:
                 raise RuntimeError("koşum kaydı yok")
-            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot))
+            run_groups = [run.owner_group_id] if run.owner_group_id else None
+            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot, allowed_group_ids=run_groups))
             # Relative work roots must be resolved before the child cwd is that
             # directory. Otherwise the executor joins the same relative path again.
             work = (Path(settings.work_root) / str(run_id)).resolve()
@@ -113,7 +114,12 @@ class LocalBackend(RunBackend):
             )
             from control_plane.catalog import resolve_llm
 
-            resolved = resolve_llm(db, settings, (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
+            resolved = resolve_llm(
+                db,
+                settings,
+                (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default",
+                allowed_group_ids=run_groups,
+            )
             harness_env = dict(base_env)
             harness_env.update(
                 {
@@ -243,8 +249,14 @@ class KubernetesBackend(RunBackend):
                 raise RuntimeError("koşum kaydı yok")
             from control_plane.catalog import resolve_llm
 
-            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot))
-            resolved = resolve_llm(db, settings, (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default")
+            run_groups = [run.owner_group_id] if run.owner_group_id else None
+            sources = materialize_sources(db, load_sources_for_spec(db, run.spec_snapshot, allowed_group_ids=run_groups))
+            resolved = resolve_llm(
+                db,
+                settings,
+                (run.spec_snapshot["spec"].get("model") or {}).get("class") or "local-default",
+                allowed_group_ids=run_groups,
+            )
             secret, job = build_run_manifests(
                 run_id=run.id,
                 agent_name=run.agent_name,

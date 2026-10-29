@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ActionButton, Badge, ConfirmDialog, Empty, SkeletonRows, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { formatWhen } from "../lib/format";
@@ -25,6 +26,7 @@ export function Agents() {
   const [pending, setPending] = useState<Agent | null>(null);
   const [view, setView] = useState("grid");
   const { run, pending: isPending } = useBusy();
+  const { can } = useAuth();
 
   function load() {
     api<Agent[]>("/api/agents").then(setRows).catch((exc: ApiError) => setError(exc.message));
@@ -85,7 +87,15 @@ export function Agents() {
         </div>
         <div className="row">
           <ViewToggle value={view} onChange={setView} options={[{ id: "grid", label: "Cards" }, { id: "list", label: "List" }]} />
-          <button className="btn" type="button" onClick={() => navigate("/agents/new")}>New agent</button>
+          <button
+            className="btn"
+            type="button"
+            disabled={!can("agent:write")}
+            title={!can("agent:write") ? copy.permissionDeniedHint : undefined}
+            onClick={() => navigate("/agents/new")}
+          >
+            New agent
+          </button>
         </div>
       </div>
       <section className="card">
@@ -157,11 +167,35 @@ function AgentActions({
   onCopy: () => void;
   onDelete: () => void;
 }) {
+  const { can } = useAuth();
   return (
     <div className="row">
-      <ActionButton busy={pending(`run:${agent.id}`)} onClick={onRun}>{copy.run}</ActionButton>
-      <ActionButton className="btn-ghost" busy={pending(`copy:${agent.id}`)} onClick={onCopy}>{copy.copy}</ActionButton>
-      <button className="btn-danger" type="button" onClick={onDelete}>{copy.delete}</button>
+      <ActionButton
+        busy={pending(`run:${agent.id}`)}
+        disabled={!can("agent:run")}
+        title={!can("agent:run") ? copy.permissionDeniedHint : undefined}
+        onClick={onRun}
+      >
+        {copy.run}
+      </ActionButton>
+      <ActionButton
+        className="btn-ghost"
+        busy={pending(`copy:${agent.id}`)}
+        disabled={!can("agent:write")}
+        title={!can("agent:write") ? copy.permissionDeniedHint : undefined}
+        onClick={onCopy}
+      >
+        {copy.copy}
+      </ActionButton>
+      <button
+        className="btn-danger"
+        type="button"
+        disabled={!can("agent:delete")}
+        title={!can("agent:delete") ? copy.permissionDeniedHint : undefined}
+        onClick={onDelete}
+      >
+        {copy.delete}
+      </button>
     </div>
   );
 }

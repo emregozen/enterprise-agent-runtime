@@ -1,9 +1,10 @@
 import { type ColumnDef } from "@tanstack/react-table";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Select } from "../components/Select";
 import { ActionButton, Badge, ConfirmDialog, DataTable, Empty, SkeletonRows, ViewToggle } from "../components/ui";
 import { api, ApiError } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { useBusy } from "../lib/busy";
 import { copy } from "../lib/copy";
 import { statusLabel, formatWhen } from "../lib/format";
@@ -38,14 +39,38 @@ export function Runs() {
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
   const [view, setView] = useState("board");
   const { run, pending } = useBusy();
+  const { can } = useAuth();
+  const inflightRef = useRef(false);
 
-  function load(nextStatus = status, nextQuery = q) {
+  const load = useCallback((nextStatus = status, nextQuery = q) => {
+    if (inflightRef.current) return;
+    inflightRef.current = true;
     const params = new URLSearchParams({ limit: "100" });
     if (nextStatus) params.set("status", nextStatus);
     if (nextQuery) params.set("q", nextQuery);
-    api<Run[]>(`/api/runs?${params}`).then(setRows).catch((exc: ApiError) => setError(exc.message));
-  }
-  useEffect(() => { load(status, q); }, [status, q]);
+    api<Run[]>(`/api/runs?${params}`)
+      .then(setRows)
+      .catch((exc: ApiError) => setError(exc.message))
+      .finally(() => {
+        inflightRef.current = false;
+      });
+  }, [status, q]);
+
+  useEffect(() => {
+    inflightRef.current = false;
+    load(status, q);
+  }, [status, q, load]);
+
+  const hasActiveRuns = Boolean(rows?.some((item) => item.status === "running" || item.status === "pending"));
+
+  useEffect(() => {
+    const intervalMs = hasActiveRuns ? 2000 : 5000;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      load(status, q);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [hasActiveRuns, status, q, load]);
 
   function rerun(item: Run) {
     void run(`rerun:${item.id}`, async () => {
@@ -104,10 +129,34 @@ export function Runs() {
     return (
       <span className="row">
         {(item.status === "running" || item.status === "pending") && (
-          <ActionButton className="btn-ghost" busy={pending(`cancel:${item.id}`)} onClick={() => cancel(item)}>{copy.cancel}</ActionButton>
+          <ActionButton
+            className="btn-ghost"
+            busy={pending(`cancel:${item.id}`)}
+            disabled={!can("run:cancel")}
+            title={!can("run:cancel") ? copy.permissionDeniedHint : undefined}
+            onClick={() => cancel(item)}
+          >
+            {copy.cancel}
+          </ActionButton>
         )}
-        <ActionButton className="btn-ghost" busy={pending(`rerun:${item.id}`)} onClick={() => rerun(item)}>Rerun</ActionButton>
-        <button className="btn-danger" type="button" onClick={() => setPendingDelete(item)}>{copy.delete}</button>
+        <ActionButton
+          className="btn-ghost"
+          busy={pending(`rerun:${item.id}`)}
+          disabled={!can("run:rerun")}
+          title={!can("run:rerun") ? copy.permissionDeniedHint : undefined}
+          onClick={() => rerun(item)}
+        >
+          Rerun
+        </ActionButton>
+        <button
+          className="btn-danger"
+          type="button"
+          disabled={!can("run:delete")}
+          title={!can("run:delete") ? copy.permissionDeniedHint : undefined}
+          onClick={() => setPendingDelete(item)}
+        >
+          {copy.delete}
+        </button>
       </span>
     );
   }
@@ -133,7 +182,15 @@ export function Runs() {
         </div>
         <div className="row">
           <ViewToggle value={view} onChange={setView} options={[{ id: "board", label: "Board" }, { id: "table", label: "Table" }]} />
-          <button className="btn-danger" type="button" onClick={() => setConfirmOld(true)}>Delete old runs</button>
+          <button
+            className="btn-danger"
+            type="button"
+            disabled={!can("run:delete")}
+            title={!can("run:delete") ? copy.permissionDeniedHint : undefined}
+            onClick={() => setConfirmOld(true)}
+          >
+            Delete old runs
+          </button>
         </div>
       </div>
       <section className="card">
