@@ -1,326 +1,347 @@
-# Ajan Çalıştırıcı
+# Enterprise Agent Runtime
 
-Kurum içi ajanları doğal dille tarif edip sürümlü bir **AgentSpec** olarak saklayan ve her koşumu ayrı bir Kubernetes / OpenShift `batch/v1` Job’unda çalıştıran açık kaynak bir kanıttır. Ücretli ürün yoktur. OpenShift AI yoktur. Model çağrıları yalnızca OpenAI uyumlu bir HTTP API’ye gider.
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python: 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
+[![TypeScript: 5.x](https://img.shields.io/badge/typescript-5.x-blue.svg)](https://www.typescriptlang.org/)
+[![Kubernetes / OpenShift](https://img.shields.io/badge/Kubernetes%20%2F%20OpenShift-Ready-326CE5.svg)](https://kubernetes.io/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![React: 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 
-Kimlik doğrulama, SSO ve çoklu kiracı bu turda yoktur.
+> **A secure, governed, enterprise-grade AI Agent Runtime built for Kubernetes and OpenShift.**
+> Transform natural language requests into declarative, versioned **AgentSpecs**, run autonomous data analytics in isolated containers, enforce AST-level SQL guardrails, integrate enterprise vaults (CyberArk & K8s Secrets), and interact with corporate data through an intuitive Chat Studio.
 
-## Ne değişti
+---
 
-Ajan, veri kaynağı ve model arayüzden yönetilir. Postgres veya Oracle bağlantısı, OpenAI uyumlu model adresi ve API anahtarı ekrandan yazılır. Parola platform veritabanında şifreli durabilir, bir Kubernetes Secret'a başvurabilir veya CyberArk'ta kalıp burada yalnız yol olarak saklanabilir. API sırrı geri vermez. Ortam değişkeni ve Helm `llm.existingSecret` yalnızca ilk açılışta bir model tohumlar. Asıl kayıt veritabanındadır.
+## 📑 Table of Contents
 
-Ajan düzenlenince yeni bir sürüm oluşur. Eski sürümle farkı görülebilir. Ajan durdurulabilir, kopyalanabilir veya gizlenerek silinebilir; geçmiş koşumlar kalır. Koşum iptal, yeniden çalıştırma ve silme (artefaktıyla birlikte) arayüzdedir. İptal edilen ve hiç başlamadan düşen koşum günlük kotaya yazılmaz.
+- [Overview](#-overview)
+- [Why Enterprise Agent Runtime?](#-why-enterprise-agent-runtime)
+- [Architecture](#-architecture)
+- [Key Features](#-key-features)
+  - [1. Governed Data Access & AST SQL Guard](#1-governed-data-access--ast-sql-guard)
+  - [2. Multi-DB Introspection (PostgreSQL & Oracle)](#2-multi-db-introspection-postgresql--oracle)
+  - [3. Enterprise Secret Governance (CyberArk & K8s Secrets)](#3-enterprise-secret-governance-cyberark--k8s-secrets)
+  - [4. Self-Healing Autonomous Execution Loop](#4-self-healing-autonomous-execution-loop)
+  - [5. Interactive "Ask Data" Chat Studio](#5-interactive-ask-data-chat-studio)
+  - [6. OIDC Authentication & Granular RBAC](#6-oidc-authentication--granular-rbac)
+  - [7. Automated Delivery & Reporting](#7-automated-delivery--reporting)
+- [Quickstart Guide](#-quickstart-guide)
+  - [Option A: Docker Compose (Recommended for Local Trial)](#option-a-docker-compose-recommended-for-local-trial)
+  - [Option B: Local Development Setup](#option-b-local-development-setup)
+  - [Option C: Kubernetes / OpenShift via Helm](#option-c-kubernetes--openshift-via-helm)
+- [Repository Structure](#-repository-structure)
+- [Configuration Reference](#-configuration-reference)
+- [Testing](#-testing)
+- [Security & Isolation Model](#-security--isolation-model)
+- [License](#-license)
 
-Rapor tablosundaki sapma yüzdeleri aynı biçimde yazılır (`0,00%` ve `300,00%`). Model çağrısı gecikme ve jeton sayısını günlüğe yazar. Akıl yürütme (`reasoning_effort`) isteğe bağlıdır ve varsayılan kapalıdır.
+---
 
-Postgres chart’ı veri diskine tek pod bağlar (`Recreate`). Aynı imaj etiketinde OpenShift tetikleyicisi Deployment metadata’sındadır; pod şablonuna konursa derleme podu yenilemez. Ulaşılamayan veri kaynağı API’de Türkçe bir 502 döner; konsol bunu İngilizce gösterir. Rapor, aynı sayıları başka biçimde tekrarlayan tabloyu ve boş liste bölümünü yazmaz.
+## 💡 Overview
 
-Master key döndürme `python -m control_plane.rotate_master_key` ile yapılır. Güncel anahtar `CONFIG_MASTER_KEY`, eskisi `CONFIG_MASTER_KEY_OLD` olur. `helm get manifest` çıktısından `agent-runtime-master-key` Secret’ı ayıklanır; anahtar düz metin basılır. Adımlar kontrol listesindedir.
+In enterprise environments, giving LLMs direct database access is dangerous: models hallucinate destructive queries, leak sensitive customer records, or overload production databases.
 
-Parola kaynağı üç yerden biri olabilir: platform veritabanı, Kubernetes Secret veya CyberArk (Conjur ya da CCP). Ayrıntı aşağıdaki bölümde.
+**Enterprise Agent Runtime** solves this by inserting a hardened, declarative orchestration layer between LLMs and enterprise infrastructure:
 
-Rapor, kodun hesapladığı medyan ve p95 gibi sayıları da yazar. Doğrulama bölümü geçen veya kalan kontrolü sayılarıyla söyler. İstenen bölüm (aylık kırılım, ilk 5) raporda yoksa koşum bitmez. Açıklamada saat yoksa taslak elle kalır. Oracle’da `FETCH FIRST` ve `ROWNUM` sınırı geçerlidir; bölge adları Türkçe abeceyle sıralanır. Postgres `/dev/shm` bellek diski chart’tadır (`postgres.shmSize`). Oracle Free deneme manifestleri `deploy/test/oracle` altındadır ve üretim chart’ına girmez.
+1. **Declarative AgentSpecs**: Agents are defined as versioned, auditable declarative specifications (`apiVersion: agents.internal/v1`).
+2. **Kubernetes/OpenShift Batch Isolation**: Every agent execution runs inside an ephemeral, dedicated `batch/v1` Job container with zero persistent state and locked-down network egress.
+3. **Deterministic SQL Guardrails**: Queries generated by the model are parsed into Abstract Syntax Trees (AST) via `sqlglot` to verify table allowlists, disallow modifications (`INSERT`/`UPDATE`/`DROP`), enforce aggregations or row limits, and block malicious dialect functions.
+4. **Zero-Plaintext Secret Policy**: Database credentials and API keys are resolved at runtime from CyberArk (Conjur / CCP) or Kubernetes Secrets without ever storing plain credentials in the runtime database or exposing them to code sandboxes.
 
-Koşum bitince rapor, kontrol düzleminden e-posta ile gidebilir. Kanal SMTP ya da kurumun HTTP e-posta API’sidir; parola yine kasa katmanındadır (platform veritabanı, Kubernetes Secret, Conjur veya CCP). Alıcılar ajanın spec’ine yazılır ve ekranda onaylanır. Model koşum sırasında alıcı ekleyemez veya değiştiremez. Kanalın izinli etki alanı sunucuda denetlenir. Gönderim koşum podundan yapılmaz; podun çıkış ağı aynı kalır. Gönderim düşerse koşum başarısız sayılmaz, koşum sayfasında uyarı görünür ve yeniden gönderilebilir. Ek olarak Markdown veya HTML vardır; PDF üretilmez. Deneme için chart’ta Mailpit kapalı gelir. Açmak için:
+---
 
-```yaml
-mailpit:
-  enabled: true
-  route:
-    enabled: true
+## 🏛 Architecture
+
+The runtime consists of three core layers designed for zero-trust enterprise deployment:
+
+```mermaid
+flowchart TD
+    subgraph Users & Clients
+        UI["Web Console & Chat Studio\n(React 19 + TypeScript)"]
+        Cron["Enterprise Scheduler\n(Cron & Event-driven)"]
+        OIDC["Identity Provider\n(Keycloak / OIDC)"]
+    end
+
+    subgraph Control Plane ["Control Plane (FastAPI)"]
+        API["REST & Tool API"]
+        RBAC["RBAC & Group Scope Engine"]
+        Catalog["Catalog & AgentSpec Registry"]
+        ChatEngine["Chat Engine & Schema Cache"]
+        Delivery["Report Delivery Engine\n(SMTP / HTTP API)"]
+        Audit["Immutable Audit Log"]
+    end
+
+    subgraph Vault Layer ["Enterprise Secrets"]
+        CyberArk["CyberArk CCP / Conjur"]
+        K8sSecret["Kubernetes Secrets"]
+        MasterKey["Fernet AES (Internal DB)"]
+    end
+
+    subgraph Job Sandbox ["Ephemeral Execution Pod (batch/v1 Job)"]
+        Harness["Job Harness (Python 3.12)\n- Introspect & LLM Plan\n- Self-Healing Loop"]
+        SQLGuard["AST SQL Guard\n(sqlglot AST Parser)"]
+        Executor["Isolated Executor Sandbox\n(DuckDB / Polars / PyArrow)"]
+    end
+
+    subgraph Enterprise Infrastructure
+        LLM["Enterprise LLM Gateway\n(OpenAI Compatible / Local / vLLM)"]
+        Postgres[("PostgreSQL")]
+        Oracle[("Oracle Database\n(Thin Client)")]
+    end
+
+    UI -->|OIDC Token| OIDC
+    OIDC -->|Claims| API
+    UI -->|REST / SSE| API
+    Cron -->|Trigger| API
+
+    API --> RBAC
+    API --> Catalog
+    API --> Audit
+    API --> ChatEngine
+
+    API -.->|Resolve Credentials| VaultLayer
+    ChatEngine -->|Guarded Query| Postgres
+    ChatEngine -->|Guarded Query| Oracle
+
+    API -->|Spawn Pod| JobSandbox
+    Harness -->|Query Model| LLM
+    Harness --> SQLGuard
+    SQLGuard -->|Validated Read-Only SELECT| Postgres
+    SQLGuard -->|Validated Read-Only SELECT| Oracle
+    Harness -->|Stream Parquet Data| Executor
+    Harness -->|Post Artifacts & Status| API
+    Delivery -->|Email / Webhook| Users
 ```
 
-SMTP kanalında sunucu `mailpit.agent-runtime.svc.cluster.local`, kapı `1025`, TLS `none` olur. Gelen kutusu `mailpit` Route’undadır. Bu Route kimlik sormaz; CRC dışında kapalı kalsın. Testlerde aynı iş için `python -m delivery.mock_http` küçük bir HTTP e-posta API’si açar.
+### The 3-Tier Execution Pipeline
+1. **Control Plane (`control_plane/`)**: Exposes REST endpoints, validates authentication/RBAC, manages versioned specs, orchestrates Kubernetes batch jobs, and hosts the Interactive Chat service.
+2. **Job Harness (`harness/`)**: Runs inside the batch job. Introspects live schema, queries the LLM for a multi-step plan, verifies SQL against `sqlguard`, executes queries, pipes raw data to Apache Parquet, and coordinates the verification loop.
+3. **Execution Sandbox (`executor/`)**: A network-isolated runtime executing DuckDB and Polars transformations on bounded datasets. The sandbox does not have database credentials or network access.
 
-Arayüz sol menülü bir yönetim konsoludur. Açılır listeler cam görünümlü özel bir seçicidir; kayıt, koşum, sınama ve silme işlemleri sağ altta bildirim olarak görünür ve yıkıcı silme onay ister. Ekran metinleri İngilizcedir (`en-US` tarih ve sayı). Ajan açıklaması olduğu gibi kalır; sihirbaz Türkçe tarifi kabul eder. API’nin Türkçe hata metni konsolda İngilizceye çevrilir. Metinler `ui/src/lib/copy.ts` içindedir; şimdilik yalnız İngilizce gönderilir. Açık ve koyu tema vardır. Yazı tipleri (Inter, IBM Plex Mono) ve betikler imajın içindedir; çalışma anında dış ağdan font veya betik çekilmez. UI kabı statik dosyayı küçük bir Node süreciyle sunar.
+---
 
-Çıkış ağı sessizce açılmaz. Koşum podu DNS, kontrol düzlemi, Postgres ve chart’taki `extraEgress` listesi dışında çıkamaz. Ağ politikası DNS adı seçemediği için DeepSeek denemesinde `0.0.0.0/0:443` kullanılır ve özel aralıklar `except` ile kesilir. Kurumsal kurulumda bunun yerine EgressFirewall veya bir çıkış vekili gerekir.
+## ✨ Key Features
 
-## Parolalar ve CyberArk
+### 1. Governed Data Access & AST SQL Guard
+Before any query reaches your database, [`sqlguard`](sqlguard/guard.py) analyzes its AST:
+* **Strict Read-Only Enforcement**: Blocks all `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `MERGE`, `GRANT`, `COPY`, `ANALYZE`, and `SELECT INTO`.
+* **Table Whitelisting (`allow_tables`)**: The query can **only** touch tables explicitly whitelisted for that datasource.
+* **Bounded Row Caps**: Disallows unconstrained queries. Any non-aggregated query **must** contain an explicit `LIMIT` (PostgreSQL) or `FETCH FIRST n ROWS ONLY` / `ROWNUM <= n` (Oracle) matching the safety limit.
+* **Dialect Function Blocklist**: Prohibits dangerous procedures and OS escape attempts (`pg_read_file`, `lo_export`, `dblink`, `utl_http`, `utl_file`, `dbms_scheduler`, etc.).
 
-Şirket parolayı bir kasada tutuyor. Uygulamanın kendi veritabanına kopyalaması, kasayı delik deşik eder: yedek, log ve ekran görüntüsü sırrı taşır. PAM (ayrıcalıklı erişim yönetimi) sırrı kasada bırakır; uygulama yalnız “şu kasadaki şu kayıt” der, değeri kullanacağı anda ister.
+### 2. Multi-DB Introspection (PostgreSQL & Oracle)
+The runtime dynamically discovers table schemas when generating SQL:
+* **PostgreSQL** ([`datasources/postgres.py`](datasources/postgres.py)): Inspects `information_schema.columns` with type mapping and nullability detection.
+* **Oracle Thin Mode** ([`datasources/oracle.py`](datasources/oracle.py)): Operates via pure Python `oracledb` thin mode (no Oracle Instant Client required). Supports SELECT-only privileges, querying `ALL_TABLES`, `ALL_VIEWS`, `ALL_SYNONYMS`, and `ALL_TAB_COLUMNS`.
+* **SQLAlchemy Fallback** ([`datasources/generic.py`](datasources/generic.py)): Generic inspection adapter for other ANSI-compliant engines.
 
-Bu kasıtta üç kaynak var.
+### 3. Enterprise Secret Governance (CyberArk & K8s Secrets)
+Designed for regulated finance and healthcare environments:
+* **CyberArk Conjur & Central Credential Provider (CCP)**: Secrets remain in the enterprise vault. The runtime stores only references (AppID, Safe, Object, or Variable Path) and fetches temporary tokens or certificates at job creation time.
+* **Kubernetes Secrets**: Native integration using namespace-isolated `secretKeyRef` references.
+* **Database Encryption at Rest**: For standalone setups, credentials are encrypted using Fernet AES-256 with key rotation support (`python -m control_plane.rotate_master_key`).
 
-1. **Platform DB.** Parola bu uygulamanın veritabanında Fernet ile durur. Anahtar `agent-runtime-master-key` Secret'ındadır. Varsayılan budur. Küçük deneme ve kasası olmayan ortam içindir.
-2. **Kubernetes Secret.** Veritabanında Secret adı ve anahtarı durur. Biçim parola ise kontrol düzlemi Secret'tan parolayı okur, sunucu, port, veritabanı ve kullanıcı alanlarıyla bağlantı adresini kurar ve yalnız o koşumun Secret'ına yazar. Biçim tam adres ise koşum podu Secret'ı kendi ad alanında `secretKeyRef` ile okur. Değer bizim tablomuza yazılmaz.
-3. **Dış kasa (CyberArk Conjur veya CyberArk CCP).** Veritabanında yalnızca başvuru durur: hangi kasa, hangi değişken veya hangi Safe/Object. Değer hiç yazılmaz. Varsayılan biçim paroladır: kasadaki değer yalnız paroladır, sunucu, port, veritabanı ve kullanıcı kaynağın kendi alanlarıdır. Tam bağlantı adresi kasada duruyorsa biçim açıkça `url` seçilir; başvuru o zaman olduğu gibi kullanılır. Sunucusu ve kullanıcısı boş eski dış kayıtlar yükseltmede `url` biçimine alınır, böylece kasadaki tam adres çalışmaya devam eder. Kontrol düzlemi koşumu kurarken kasadan okur, yalnız o koşumun Secret'ına koyar. Koşum bitince bu Secret Job ile silinir. Kod kabı (executor) bu değeri görmez. Kasa kapalıysa koşum başlamadan düşer; bu düşüş günlük kotaya yazılmaz.
+### 4. Self-Healing Autonomous Execution Loop
+When generating complex reports:
+1. **Schema Introspection**: Gathers table schemas and column types.
+2. **Plan Generation**: LLM drafts SQL and Python data computation logic.
+3. **Guard & Cost Validation**: AST safety verification followed by an `EXPLAIN` query. If estimated cost exceeds `SQL_MAX_COST`, the query is flagged for review.
+4. **Data Ingestion**: Data is streamed directly into an ephemeral Apache Parquet buffer.
+5. **Cross-Check & Self-Healing**: Deterministic cross-checks verify calculations (e.g. `grand_total == SUM(amount)`). If an assertion fails, the error is fed back to the model for self-repair (up to `max_repair_rounds`).
 
-Kasanın kendi kimliği de düz metin değildir. Conjur API anahtarı veya CCP istemci sertifikası, kontrol düzleminin ad alanındaki bir Kubernetes Secret'tadır. Kontrol düzlemi onu okuyabilir. Koşum hesabı okuyamaz.
+### 5. Interactive "Ask Data" Chat Studio
+A fast-path, multi-turn conversational interface over governed datasources:
+* Interactive data grid and Markdown answers.
+* In-flight query timing and SQL preview modal with AST inspection badge.
+* Concurrency limiting (`MAX_CONCURRENT_CHAT_QUERIES = 10`) and short-term schema caching (60s TTL).
 
-Conjur Open Source, şirketin kasasının ücretsiz kardeşidir. Aynı REST şekliyle denenir: host API anahtarı kısa ömürlü bir jetona çevrilir, değişken o jetonla okunur. CRC denemesi `deploy/test/conjur` altındadır. İmaj `cyberark/conjur:1.24.0` olmalıdır; 1.27 yalnız amd64'tür. `authn-k8s` ve `authn-jwt` kontrol düzleminin servis hesabı jetonuyla aynı uçlara gider; PoC yolu API anahtarıdır, jeton dosyası bağlanınca diğeri de çalışır.
+### 6. OIDC Authentication & Granular RBAC
+* **OIDC / Keycloak Integration**: Role & group claims automatically mapped to internal permissions.
+* **Granular Scopes**: Permissions partitioned by domain (`datasource:read`, `datasource:write`, `agent:run`, `chat:ask`, `admin:users`).
+* **Group Isolation**: Multi-tenant data source and agent scoping per department.
 
-Şirketteki asıl ürün Conjur değil, CyberArk Central Credential Provider'dır. CCP çağrısı şöyledir: `GET /AIMWebService/api/Accounts?AppID=&Safe=&Object=` veya aynı bilgilerin `Query` ile yazılması. Dönen JSON'da parola `Content` alanındadır. Kimlik, istemci sertifikası (mTLS) ve/veya izinli makine listesidir: isteği atan adres, CyberArk uygulamasında yazılı olmalıdır. Bu kasıt her iki yolu da bilir. CCP bu ortamda kurulmaz; birim testi sahte bir HTTP sunucusuna gider. OpenBao ve Vault aynı kata ayrılmıştır, sır okumaz; bağdaştırıcı sonraki sürüme bırakıldı.
+### 7. Automated Delivery & Reporting
+* Distributes finished Markdown/HTML executive reports via SMTP or corporate HTTP Email APIs.
+* Enforces strict recipient domain allowlists (`allow_domains`).
+* Model cannot arbitrarily add or modify recipients.
 
-CyberArk ekibinden deneme için şunlar istenir: bir test Safe, bir AppID, kontrol düzlemi pod'larının çıkış adreslerinin izinli makine listesine eklenmesi veya bu AppID için bir istemci sertifikası, ve okunacak hesapların Object adları (satış Postgres parolası, satış Oracle parolası, DeepSeek API anahtarı). Sertifika ve anahtar bir Kubernetes Secret'a konur; arayüze yapıştırılmaz.
+---
 
-## Ne yapar
+## 🚀 Quickstart Guide
 
-1. Çalışan, veri kaynağını ve cümleyi seçer. Builder, şemayı okuyup bir AgentSpec taslağı üretir. Ham satır modele gitmez.
-2. Taslak yayınlanır. Sürüm ve zamanlama Postgres’te durur.
-3. Zamanlayıcı cron’u (`Europe/Istanbul`) ya da ajanın `schedule_next_run` isteğini politika sınırında işletir.
-4. Her koşum bir Job’dur. Job bitince `ttlSecondsAfterFinished` ile silinir. Süre `activeDeadlineSeconds` ile sınırlıdır.
-5. Podda iki kap vardır. Harness sırları taşır. Executor taşımaz; üretilen Python’u `python -I` ile çalıştırır.
-6. Büyük okuma önce SQL’de toplanır. Gerekirse Arrow parçaları Parquet olur, DuckDB / Polars podun içinde hesaplar. Sayılar ayrı bir SQL ile karşılaştırılır. Tutmazsa koşum `needs_review` olur.
-7. E-posta ve SMS, kontrol düzlemindeki araç vekilinden gider. Jeton poda konmaz. Adres boşsa çağrı taklit edilir ve denetlenir.
+### Option A: Docker Compose (Recommended for Local Trial)
 
-## Yerleşim
-
-```
-control_plane/     FastAPI, kayıt, zamanlayıcı, Job üretimi, araç vekili
-secret_sources/           Conjur, CCP ve ileride OpenBao/Vault
-harness/           plan, SQL, parquet, rapor
-executor/          gizli bilgisiz kod yürütücü
-sqlguard/          tek SELECT, izinli tablo, agrega veya LIMIT
-datasources/       Postgres, Oracle, genel SQLAlchemy
-shared/            AgentSpec, sahte LLM, OpenAI uyumlu istemci
-ui/                Vite arayüz
-scripts/           satış verisi
-deploy/helm/       OpenShift / CRC chart
-deploy/openshift/  EgressFirewall örneği (chart uygulamaz)
-tests/             birim ve uçtan uca
-evals/             sahte builder kontrolü
-docs/adr/          sapma gerekçeleri
-```
-
-## Mimari
-
-```
-tarayıcı → UI :8842 → kontrol düzlemi :8841 → Postgres
-                              │
-                              ├─ zamanlayıcı (advisory lock)
-                              ├─ araç vekili (e-posta, SMS, genel HTTP)
-                              └─ Kubernetes API
-                                    │
-                                    ▼
-                         Job (her koşumda yeni)
-                         ├─ harness  (RUN_TOKEN, DSN, LLM)
-                         └─ executor (sır yok, 127.0.0.1:7070)
-                              paylaşılan emptyDir /work
-                              artefakt PVC'si yok
-```
-
-Run podu restricted-v2 ile uyumludur: kök değil, `runAsUser` yok (platform UID verir), yetki yükseltme yok, kök dosya sistemi salt okunur, tüm yetkiler düşürülür, `automountServiceAccountToken: false`, `enableServiceLinks: false`. NetworkPolicy çıkışı DNS, kontrol düzlemi ve Postgres ile sınırlar. LLM ve dış veritabanı için `networkPolicy.extraEgress` doldurulur. Artefakt yüklemesi bu listenin içindeki kontrol düzlemi çıkışını (`:8841`) kullanır. Yeni bir kapı açılmaz.
-
-## Neden bu bileşenler?
-
-Satış tablosu on milyon satıra çıkabilir. Modele bu tablonun ham hali gitmez; modele yalnızca hesaplanmış kısa özet gider.
-
-Önce soru veritabanına sorulur: dünün tutarı bölge bölge nedir? Postgres indeksi sekiz günlük pencereyi onlarca satıra indirir. Toplama verinin yanında biter. Buna SQL pushdown denir. On milyon satırlık denemede tam tablo toplamı 735 ms, günlük pencere 0,2 ms sürdü.
-
-Kodun kendisi hesaplayacaksa satırlar parça parça okunur ve Parquet dosyasına yazılır. Parquet sayıları sütun sütun tutar, bu yüzden aynı veri Python listesinde olduğundan çok daha az yer kaplar. On milyon satır yaklaşık 116 MB dosya oldu. Okuyan sürecin tepe belleği 114 MB idi. Parça boyu 10 000 satırdır; 2 000 ve 50 000 de denendi, 10 000 daha hızlı kaldı.
-
-DuckDB bu dosyanın üstünde, koşum podunun içinde çalışır. Ayrı bir hesap sunucusu kurulmaz. Pod, toplamı bir de SQL ile sayar. İki sonuç uyuşursa rapora güvenilir. Uyuşmazsa koşum `needs_review` olur ve e-posta gitmez.
-
-Pod raporu geçici `/work` alanında üretir ve koşum jetonuyla kontrol düzlemine akıtır. Düzlem boyutu sınırlar ve kalıcı kopyayı kendi diskine yazar. OpenShift’te bu disk bir PersistentVolume’dur. Yalnızca kontrol düzlemi podu onu görür. `ReadWriteOnce` olduğu için kontrol düzlemi tek replika kalır. Birden fazla replika gerekiyorsa `ARTIFACT_STORE=s3` seçilir.
-
-SeaweedFS, S3 yolunu bu makinede denemek için kurulan yerel bir deneme tezgahıdır. Kurumun nesne deposu ayrıdır. İlk fazın varsayılanı PVC’dir.
-
-## Sapmalar
-
-Referans yerleşime göre bilinçli farklar `docs/adr/` altındadır.
-
-| Konu | Bu PoC |
-| --- | --- |
-| Orkestrasyon | LangGraph yok. Yalın döngü. |
-| İz | Langfuse yok. JSON günlük, OTLP uç noktası, Postgres denetim kaydı. |
-| Model ağ geçidi | LiteLLM süreci yok. İstemci `base_url` / `model` / `api_key` kullanır. `LLM_MODEL_CLASSES` sınıf adını eşler. |
-| Çekme | ADBC ve ConnectorX yok. psycopg sunucu imleci, Oracle `fetch_df_batches`, diğerleri SQLAlchemy. |
-| Grafik | matplotlib yok. Rapor SVG’si standart kütüphane. |
-| İmaj | Varsayılan taban `python:3.12-slim`. İç ayna için imajı yeniden etiketleyin. `BASE_IMAGE` ile kök yetkili bir Python 3.12 tabanı verilebilir. UBI9 python-312 sanal ortam beklediği için varsayılan değildir. |
-| Artefakt | Kalıcı kopya kontrol düzleminin PVC’sindedir. Pod dosyayı iç API’ye akıtır. S3 seçenek olarak durur. |
-| Yerel Kubernetes | Docker ve kind bu ortamda yok. Yerel arka uç iki süreçtir. Job belgesi sahte API ile test edilir. |
-| Kaynak isteği | Referanstaki 1 CPU / 2Gi yerine kap başına 500m / 1Gi. OpenShift Local’da iki kap sığsın diye. Spec JSON’dan yükseltilir. |
-| Şema | Açılışta `create_all` ve denetim tetikleyicisi. Ayrı bir Alembic revizyonu üretilmedi. |
-
-## Yerel çalıştırma
-
-Python 3.12, Node 22 ve Postgres 16 gerekir. Bu depoda sanal ortam `.venv` içindedir.
+Get the full stack (PostgreSQL, Mock LLM Gateway, Control Plane, and Web UI) running in seconds:
 
 ```bash
-sudo pg_ctlcluster 16 main start
-sudo -u postgres psql -c "CREATE USER agentrt WITH SUPERUSER PASSWORD 'agentrt';" || true
-sudo -u postgres psql -c "CREATE DATABASE agentrt OWNER agentrt;" || true
+# 1. Clone the repository
+git clone https://github.com/emregozen/enterprise-agent-runtime.git
+cd enterprise-agent-runtime
 
-cd /yol/agent-runtime
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
-cp .env.example .env
+# 2. Launch with docker-compose
+docker compose up -d
 
-chmod +x scripts/local-up.sh
-SEED_SALES_ROWS=20000 scripts/local-up.sh
-
-set -a && source .env && set +a
-.venv/bin/python -m control_plane
+# 3. Open the UI
+open http://localhost:3000
 ```
 
-İkinci uçbirimde:
+* **Control Plane API:** `http://localhost:8000/docs`
+* **Default Admin Credentials:** `admin` / `admin123` (or OIDC if enabled)
 
+---
+
+### Option B: Local Development Setup
+
+#### Prerequisites
+* **Python**: 3.12+
+* **Node.js**: 20+ & `npm`
+* **PostgreSQL**: 15+ (local instance or container)
+
+#### 1. Backend Setup
+```bash
+# Create and activate virtual environment
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# Install Python dependencies
+pip install -e ".[dev]"
+
+# Set development environment variables
+export DATABASE_URL="postgresql://agentrt:agentrt@localhost:5432/agent_runtime"
+export CONFIG_MASTER_KEY="MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=" # 32-byte urlsafe base64 key
+export LLM_MODE="fake" # Or "openai" to connect to real model
+
+# Run database migrations and seed default data
+python -m control_plane.migrate
+python -m control_plane.seed
+
+# Start the Control Plane API server
+uvicorn control_plane.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+#### 2. Frontend Setup
 ```bash
 cd ui
-npm ci
-CONTROL_PLANE_URL=http://127.0.0.1:8841 npm run dev
+
+# Install dependencies
+npm install
+
+# Start Vite dev server (proxies /api to http://localhost:8000)
+npm run dev
 ```
+Access the application at `http://localhost:5173`.
 
-Arayüz [http://127.0.0.1:8842](http://127.0.0.1:8842), API [http://127.0.0.1:8841/docs](http://127.0.0.1:8841/docs).
+---
 
-`LLM_MODE=fake` iken model ağa çıkmaz. Gerçek model için:
+### Option C: Kubernetes / OpenShift via Helm
+
+Deploy into a Kubernetes cluster or Red Hat OpenShift / CodeReady Containers (CRC):
 
 ```bash
-LLM_MODE=openai
-LLM_BASE_URL=http://127.0.0.1:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=qwen2.5-coder:7b
-```
-
-Kısıtlı veri (`sensitivity: restricted`) `cloud-` ile başlayan model sınıfına gidemez; koşum `needs_review` olur.
-
-### Docker Compose
-
-Docker varsa kontrol düzlemi, arayüz ve Postgres birlikte kalkar. Postgres konteyner içinde 5432, makinede **54329** portudur.
-
-```bash
-docker compose up --build
-```
-
-İsteğe bağlı profiller:
-
-```bash
-docker compose --profile oracle up    # gvenzl/oracle-free, büyük imaj
-docker compose --profile s3 up        # SeaweedFS, S3 API makinede 8833
-```
-
-Oracle DSN örneği: `oracle://system:oracle@127.0.0.1:1521/FREEPDB1`. Kaynak `dialect: oracle` ile kaydedilir. Oracle sürücüsü ince moddadır; anlık istemci gerekmez. Bu imaj burada çekilmedi.
-
-Varsayılan artefakt deposu `ARTIFACT_STORE=pvc`dir. Yerelde bu, `ARTIFACT_DIR` klasörüdür (bu makinede `var/artifacts`). OpenShift’te aynı yol kontrol düzleminin PVC’sine bağlanır (`/var/artifacts`).
-
-S3 denemesi için `ARTIFACT_STORE=s3` ve `S3_ENDPOINT_URL=http://seaweedfs:8333`. Docker olmadan aynı yol, Apache-2.0 SeaweedFS 3.80 ikili dosyasıyla `127.0.0.1:8833` üzerinde denendi. Anahtar `agentrt` / `agentrt-secret`. `tests/test_s3_artifacts.py` nesneyi yazıp geri okur. Sunucu yoksa test atlanır. SeaweedFS, S3 seçeneğinin yerel provasıdır.
-
-## Örnek satış verisi
-
-Yapısal çekirdek, her bölge için dün ve önceki yedi günü doldurur. Doğu Anadolu’nun dünkü tutarı dört katıdır; sapma bu yüzden durur. Ek satırlar sekiz günlük pencerenin dışına yazılır.
-
-```bash
-.venv/bin/python scripts/generate_sales.py \
-  --database-url postgresql://agentrt:agentrt@127.0.0.1:5432/sales \
-  --rows 20000 --grant-read-only
-```
-
-On milyon satır aynı komutla `--rows 10000000`. Yükleme `COPY` kullanır. Koşum kullanıcısı `sales_ro` olur ve `default_transaction_read_only` alır. Kontrol düzlemi `SALES_DATABASE_URL` ile bu kullanıcıyı görür. Yönetici adresi `SALES_ADMIN_URL` yalnızca yükleme içindir ve Job’a konmaz.
-
-Bu makinede 10 milyon satır 42 saniyede yüklendi. Tablo yaklaşık 1,1 GB. Ayrıntılı süreler `docs/benchmarks/10m.md` dosyasındadır. Özet:
-
-| Yol | Sonuç |
-| --- | --- |
-| Tam tablo `SUM` / `GROUP BY` | 735 ms, plan düğümü Aggregate |
-| Günlük pencere (indeks) | 0,2 ms, 56 satır |
-| 10 milyon satırın Parquet’e alınması | 13,9 s, 116 MB dosya, okuyucu tepe belleği 114 MB, parti boyu 10 000 |
-| Executor içinde DuckDB | 0,24 s, tepe bellek 81 MB, SQL toplamıyla uyumlu (10 000 000 satır) |
-| Seed `gunluk-satis-ozeti` | 0,76 s, durum succeeded, toplam 10.160,00, tek sapma Doğu Anadolu, executor tepe belleği 107 MB |
-
-300 bin satırda 2 000, 10 000 ve 50 000’lik partiler denendi. 10 000 en hızlısıydı ve 50 000’den daha az bellek kullandı. Varsayılan `ARROW_BATCH_ROWS` bu yüzden 10 000 kaldı.
-
-## Test
-
-```bash
-.venv/bin/python -m pytest tests -q
-.venv/bin/python evals/check_fake_builder.py
-```
-
-Uçtan uca test, örnek ajanı iki yerel süreç olarak API’ye karşı çalıştırır. Kubernetes testi `create_from_dict` işlevini değiştirir; Secret ve Job belgesini, executor ortamında sır olmadığını ve `backoffLimit: 0` olduğunu doğrular. Kind veya gerçek bir küme bu makinede yoktur.
-
-## OpenShift Local
-
-Yarınki doğrulama adımları ve beklenen çıktılar `OPENSHIFT-LOCAL-CHECKLIST.md` dosyasındadır. Kurulum `kubeadmin` ile yapılır. Geliştirici kullanıcısı ad alanları arasında RoleBinding yazamayabilir.
-
-```bash
-crc start
-eval "$(crc oc-env)"
-eval "$(crc podman-env)"
-oc login -u kubeadmin https://api.crc.testing:6443
-# parola: crc console --credentials
-
-oc patch configs.imageregistry.operator.openshift.io/cluster \
-  --type merge -p '{"spec":{"defaultRoute":true}}'
-HOST="$(oc get route default-route -n openshift-image-registry --template='{{ .spec.host }}')"
-podman login --tls-verify=false -u kubeadmin -p "$(oc whoami -t)" "$HOST"
-
-podman build -f deploy/docker/Dockerfile.runtime -t agent-runtime-py312:0.2.0 .
-podman tag agent-runtime-py312:0.2.0 "$HOST/agent-runtime/agent-runtime-py312:0.2.0"
-podman push --tls-verify=false "$HOST/agent-runtime/agent-runtime-py312:0.2.0"
-
-podman build -f ui/Dockerfile -t agent-runtime-ui:0.2.0 \
-  --build-arg CONTROL_PLANE_URL=http://control-plane.agent-runtime.svc:8841 ui
-podman tag agent-runtime-ui:0.2.0 "$HOST/agent-runtime/agent-runtime-ui:0.2.0"
-podman push --tls-verify=false "$HOST/agent-runtime/agent-runtime-ui:0.2.0"
-
-helm upgrade --install agent-runtime deploy/helm/agent-runtime \
-  --namespace agent-runtime --create-namespace \
+# 1. Add secret configuration and customize values
+helm template agent-runtime deploy/helm/agent-runtime \
   -f deploy/helm/agent-runtime/values-crc.yaml
-```
 
-`podman` yoksa imajları kümede derleyin. Adım adım komutlar `OPENSHIFT-LOCAL-CHECKLIST.md` bölüm 3’tedir (`oc new-build --binary`, `oc start-build --from-dir`).
-
-Dar bir CRC sanal makinesinde aynı kuruluma `values-crc-small.yaml` eklenir. İstekler düşer; koşumun geçici disk isteği 1Gi kalır.
-
-```bash
+# 2. Deploy the Helm release
 helm upgrade --install agent-runtime deploy/helm/agent-runtime \
-  --namespace agent-runtime --create-namespace \
-  -f deploy/helm/agent-runtime/values-crc.yaml \
-  -f deploy/helm/agent-runtime/values-crc-small.yaml
-
-oc get route agent-runtime -n agent-runtime
-oc get pods -n agent-runtime
-oc get pods -n agent-runs
-```
-
-`--create-namespace` yayın ad alanı `agent-runtime`i açar. Chart bu ad alanını bir daha yazmaz; yazsaydı Helm sahiplik yüzünden kurulumu durdururdu. Eski chart (`6adb025`) ad alanını release’e koyuyordu. O kurulumdan yükseltmeden önce `oc annotate ns agent-runtime helm.sh/resource-policy=keep --overwrite` gerekir; yoksa `helm upgrade` ad alanını ve içindeki Secret, derleme ve release kaydını siler. Toparlama adımları `OPENSHIFT-LOCAL-CHECKLIST.md` bölüm 0’dadır. Chart yalnızca koşum ad alanı `agent-runs`i açar. Kontrol düzlemi Job ve Secret’ı oraya koyar. Postgres adresi `postgres.agent-runtime.svc.cluster.local` olur, böylece koşum ad alanından da çözülür. `ARTIFACT_STORE=pvc` iken kontrol düzlemi `Recreate` ile kalkar. Run podunun imajı çekebilmesi için `agent-runs` hizmet hesabına `system:image-puller` bağlanır (`grantImagePuller`).
-
-LLM kümenin dışındaysa çıkış kapalıdır. `values-crc.yaml` içine ekleyip yeniden kurun:
-
-```yaml
-networkPolicy:
-  extraEgress:
-    - name: llm
-      cidr: 10.20.0.0/24
-      port: 443
-    - name: oracle
-      cidr: 10.20.1.0/24
-      port: 1521
-```
-
-Küme dışına ikinci bir kapı olarak `deploy/openshift/egressfirewall.example.yaml` durur. Chart onu uygulamaz. CIDR’leri değiştirmeden uygulamayın.
-
-Gerçek modele geçmek için:
-
-```bash
-helm upgrade agent-runtime deploy/helm/agent-runtime \
   --namespace agent-runtime \
+  --create-namespace \
   -f deploy/helm/agent-runtime/values-crc.yaml \
   --set llm.mode=openai \
   --set llm.baseUrl=http://llm-gateway.internal:8000/v1 \
   --set llm.model=qwen2.5-coder \
-  --set llm.apiKey=degistirin
+  --set llm.apiKey=your-api-key
 ```
 
-İmaj adresi chart’ta `image-registry.openshift-image-registry.svc:5000/agent-runtime` olur. Podlar bu iç adresten çeker. `podman push` dış route’a yapılır.
+---
 
-Satış tablosu açılışta `SEED_SALES_ROWS` kadar yüklenir (varsayılan 20 000). On milyon için `--set seedSalesRows=10000000`. Postgres kabında `readOnlyRootFilesystem` yoktur; SCL imajı veri dizinine yazar. Kontrol düzlemi ve arayüz salt okunur kök ile kalkar. Kontrol düzleminin yazdığı yerler `emptyDir /tmp` ve artefakt PVC’sidir. PVC `ReadWriteOnce`, varsayılan boy 5Gi, depolama sınıfı boşsa kümenin varsayılan sınıfı kullanılır (`artifacts.storageClass`). Yalnızca control-plane Deployment bu diski bağlar. `controlPlane.replicas` 1 kalır. Chart, pvc modunda replikayı 1’in üstüne çıkarırsa kurulumu durdurur. Ölçek için `artifacts.store=s3` ya da ReadWriteMany bir sınıf gerekir.
+## 📂 Repository Structure
 
-Eski raporlar `artifacts.retentionDays` (varsayılan 14) sonunda silinir. Zamanlayıcı bunu saatte bir yapar. `0` silmeyi kapatır. `SCHEDULER_ENABLED=false` ise temizlik döngüsü de durur.
+```text
+├── control_plane/          # FastAPI backend services, REST APIs & models
+│   ├── auth.py             # JWT / OIDC token verification & RBAC context
+│   ├── chat.py             # Interactive "Ask Data" multi-turn chat engine
+│   ├── catalog.py          # Datasource, model, and agent catalogs
+│   ├── delivery_routes.py  # Email and webhook delivery endpoints
+│   ├── models.py           # SQLAlchemy database models
+│   └── tool_proxy.py       # Sandboxed proxy for agent tool requests
+├── datasources/            # Database connectors & schema introspection
+│   ├── base.py             # Protocol definition (SchemaCatalog, ColumnInfo)
+│   ├── postgres.py         # Native PostgreSQL driver with information_schema
+│   ├── oracle.py           # Oracle driver (thin mode, synonyms, ALL_TAB_COLUMNS)
+│   └── generic.py          # Generic SQLAlchemy fallback adapter
+├── delivery/               # Notification & report dispatching (SMTP / HTTP API)
+├── deploy/                 # Deployment assets
+│   ├── docker/             # Dockerfiles (unified runtime container)
+│   └── helm/agent-runtime/ # Production Kubernetes / OpenShift Helm charts
+├── executor/               # Lightweight Python sandbox for code execution
+├── harness/                # Agent runtime lifecycle loop & self-repair logic
+│   ├── loop.py             # Execution coordinator (introspect -> plan -> guard -> verify)
+│   └── sections.py         # Report generation & verification section builders
+├── secret_sources/         # Vault adapters (CyberArk Conjur, CCP, K8s Secrets)
+├── shared/                 # Shared utilities, crypto, configuration, and LLM clients
+├── sqlguard/               # AST SQL Guardrail engine using sqlglot
+│   └── guard.py            # AST validation rules, limits, and function blocklists
+└── ui/                     # React 19 + TypeScript + Vite + Tailwind CSS frontend
+    └── src/
+        ├── components/     # Shell, ChatStudio, and ReportView components
+        ├── pages/          # DataSources, Agents, ChatPage, Runs, Delivery, Admin
+        └── lib/            # Auth hooks, API client, and translation utilities
+```
 
-Parolalar chart değerlerindeki geliştirme varsayılanlarıdır (`agentrt`, `agentrt-admin`, `sales_ro`). Kurumda değiştirin.
+---
 
-## Bilinen sınırlar
+## ⚙️ Configuration Reference
 
-- Kimlik doğrulama yok. Arayüz ve `/api` ağda kim varsa açıktır. İç uçlar koşum jetonu ister.
-- Executor ile harness aynı pod ağını paylaşır. Executor’un ortamında DSN ve jeton yoktur; yine de podun ağ arayüzünü görür.
-- Oracle sürücüsü ve SQL süzgeci testlidir. Bu makinede 1521 portu kapalı; Oracle Free kurulmadı.
-- S3 yolu SeaweedFS 3.80 ile denendi. Bu, PVC varsayılanının yanında duran seçenektir. MinIO’nun güncel ikili dosyası AIStor lisansına geçtiği için kullanılmadı.
-- Gerçek bir OpenAI uyumlu modele ağırlık indirilmedi. `tests/test_openai_client.py` yerel bir Chat Completions sunucusuna model adını, bearer jetonunu ve `response_format` geri çekilmesini doğrular. `LLM_MODE=fake` demo varsayılanıdır.
-- Gerçek bir kümede Job kalkmadı. Docker, kind ve kubectl bu makinede yok.
-- İmajlar burada derlenmedi.
-- Denetim kaydı güncellenemez ve silinemez. Başka tablolar normaldir.
-- Araç vekili saatte `TOOL_RATE_LIMIT_PER_HOUR` çağrıyı geçerse reddeder. Alıcı listesi `EMAIL_RECIPIENT_ALLOWLIST` dışına çıkamaz.
-- `needs_review` ve `dry_run` araç çağırmaz.
-- Artefakt üst sınırı `ARTIFACT_MAX_BYTES` (varsayılan 20 MB). Saklama `ARTIFACT_RETENTION_DAYS` (varsayılan 14). PVC tek kontrol düzlemi replikasına bağlanır. Başlamadan düşen koşum (Job 502, `started_at` boş) günlük kotaya yazılmaz. Başlayıp sonra düşen koşum yazılır.
-- Pencere aynı gün içindedir (`07:00-20:00`). Geceyi aşan aralık desteklenmez.
+Key settings configurable via environment variables or Helm values:
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | *Required* | SQLAlchemy connection string for the Control Plane database |
+| `CONFIG_MASTER_KEY` | *Required* | 32-byte URL-safe base64 key for encrypting secrets at rest |
+| `LLM_MODE` | `fake` | Model provider mode: `fake` (testing), `openai` (compatible API) |
+| `LLM_BASE_URL` | `""` | URL to OpenAI-compatible endpoint (e.g. vLLM, Ollama, Azure, DeepSeek) |
+| `LLM_API_KEY` | `""` | API Key for LLM provider (can also be loaded from K8s secret) |
+| `OIDC_ENABLED` | `false` | Enable OpenID Connect (Keycloak / Okta / Azure AD) authentication |
+| `OIDC_ISSUER_URL` | `""` | OIDC Issuer URL for JWT validation and user info retrieval |
+| `SQL_STATEMENT_TIMEOUT_MS` | `10000` | Hard statement timeout for database queries (milliseconds) |
+| `SQL_MAX_LIMIT` | `1000` | Maximum allowable rows in raw SELECT queries |
+| `SQL_MAX_COST` | `500000.0` | Maximum permissible EXPLAIN query cost before blocking |
+| `ARTIFACTS_STORE` | `pvc` | Storage backend for run artifacts: `pvc` or `s3` |
+
+---
+
+## 🧪 Testing
+
+The repository maintains an extensive test suite covering SQL AST rules, database introspection, delivery mechanisms, and full-loop agent execution:
+
+```bash
+# Run backend Python tests with pytest
+pytest -v
+
+# Run SQL guard specific tests
+pytest tests/test_sqlguard.py
+
+# Run Oracle & Postgres introspection tests
+pytest tests/test_oracle_introspect.py tests/test_datasources.py
+
+# Run Frontend unit & component tests
+cd ui && npm test
+```
+
+---
+
+## 🛡 Security & Isolation Model
+
+Enterprise Agent Runtime adheres to defense-in-depth principles:
+
+* **Zero Direct Execution**: The LLM never has network access or credentials to execute queries directly. All SQL passes through `sqlguard` and all data processing code runs in an isolated runner.
+* **Non-Bypassable Read-Only Sessions**: Database sessions are opened with explicit read-only transactions (`SET default_transaction_read_only = on`).
+* **Strict Egress Policies**: Agent sandbox pods are bound by Kubernetes NetworkPolicies restricting egress exclusively to authorized internal endpoints.
+* **Auditable Operations**: All user actions, model generation plans, and query rejections are written to an append-only, tamper-resistant audit log.
+
+---
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
