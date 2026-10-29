@@ -6,6 +6,13 @@ __pycache__/
 dist/
 build/
 .env
+.env.*
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
 var/
 ui/node_modules/
 ui/.next/
